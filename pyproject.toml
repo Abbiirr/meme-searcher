@@ -1,0 +1,47 @@
+[project]
+name = "vidsearch"
+version = "0.1.0"
+description = "Local-first multimodal search engine - Phase 0 meme searcher"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.10.0",
+    "psycopg[binary]>=3.3.2",
+    "qdrant-client>=1.13.0",
+    "minio>=7.2.0",
+    "pillow>=11.0.0",
+    "paddleocr>=3.0.0",
+    "paddlepaddle>=3.0.0",
+    "sentence-transformers>=3.3.0",
+    "transformers>=4.47.0,<5.0",
+    "torch==2.11.0",
+    "FlagEmbedding>=1.2.0",
+    "einops>=0.8.0",
+    "httpx>=0.28.0",
+    "pyyaml>=6.0.0",
+    "numpy>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

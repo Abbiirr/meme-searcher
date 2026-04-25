@@ -32,11 +32,11 @@ The governing principle is: **caption-when-cheap, retrieve-on-cheap, verify-with
 ### Frontend
 - Use **Open WebUI** as the primary frontend.
 - OWUI must connect only to the internal LiteLLM backend.
-- OWUI must be pinned to a **patched stable release** (at minimum `v0.6.35+` because of CVE-2025-64496).
+- OWUI must be pinned to a patched stable release. Current repo target: `v0.9.1` with Direct Connections disabled.
 - Direct Connections remain disabled.
 
 ### Core backend
-- **PostgreSQL 17** is the source of truth.
+- **PostgreSQL 18** is the source of truth (bumped from 17 per Entry 7 compatibility matrix; `pgdata` volume must be reset before the bump since no production data exists yet).
 - **Qdrant** is the vector and hybrid retrieval engine.
 - **MinIO** is the object store.
 - **Prefect 3** is the orchestrator.
@@ -138,8 +138,8 @@ The detailed exit criteria and closing gates live in the per-phase files. This s
 
 ### Phase 0 — Meme searcher (image-only)
 - Compose stack boots; Postgres schema applied; Qdrant collection + alias created; LiteLLM config validated; OWUI connected.
-- 10,000+ memes ingested; idempotent re-ingest proven.
-- 50-query meme eval set executed; baseline `nDCG@10` recorded with a `config_hash`; reranker uplift ≥ +2 pp.
+- Starting corpus is `data/meme` (~3,107 supported images); full-corpus ingest run; idempotent re-ingest proven. Corpus-count baseline (seen / supported / ingested / duplicate / skipped / failed) pinned in `docs/decision_log.md` after the first full run.
+- **40-query meme eval set (10 per class × 4 classes: `exact_text`, `fuzzy_text`, `semantic_description`, `mixed_visual_description`)** executed with graded qrels; baseline `nDCG@10` recorded with a `config_hash`; reranker uplift ≥ +2 pp.
 - OWUI tool returns grounded meme results with thumbnails.
 - Backup/restore drill logged; delete flow proven.
 - `docs/phase1_short_clips_transition.md` signed off.
@@ -185,7 +185,7 @@ The detailed exit criteria and closing gates live in the per-phase files. This s
 
 ## 9. Immediate implementation order
 
-1. **Build Phase 0 meme searcher end-to-end** (image-only): infra up, schemas frozen, Qdrant `memes_v1` created, content-addressed `image_id`, batch ingest idempotent, hybrid retrieval + local rerank proven, FastAPI + OWUI wired, 50-query meme eval baseline recorded. **No video code is written in this phase.** See `PHASE_0_PLAN.md` / `PHASE_0_TODO.md`.
+1. **Build Phase 0 meme searcher end-to-end** (image-only): infra up, schemas frozen, Qdrant `memes_v1` created, content-addressed `image_id`, batch ingest idempotent over `data/meme`, hybrid retrieval + local rerank proven, FastAPI + OWUI wired, **40-query meme eval baseline (10 per class × 4 classes)** with graded qrels recorded. **No video code is written in this phase.** See `PHASE_0_PLAN.md` / `PHASE_0_TODO.md` for the authoritative Phase 0 contract.
 2. **Phase 1 short-clip vertical slice:** additive schema migration (`core.videos`, `core.segments`), 12-step ingest flow on one video, timestamped `/search` + OWUI timeline chips, 20-query video eval baseline.
 3. **Phase 2 corpus scale + Lane B validation + caption backfill:** rate-aware scheduler, Lane B G1–G5 verdict, Langfuse online, reindex drill on live alias.
 4. **Phase 3 eval maturity + reranker A/B + CI gating:** ≥100 queries per media graded, reranker winner promoted, `all_media` alias decision, CI regression gate blocks merges.

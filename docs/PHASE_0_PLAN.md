@@ -1,268 +1,529 @@
-# PHASE_0_PLAN.md — Meme searcher (image-only)
+# PHASE_0_PLAN.md - Meme searcher
 
-**Version:** 2026-04-18
-**Status:** Planning-ready; blocks all Phase 1+ work
+**Version:** 2026-04-19
+**Status:** Implementation-ready
 **Owner:** primary builder (OpenCode)
 **Reviewers:** Codex, Claude
-**Upstream docs:** `../ARCHITECTURE.md`, `FINAL_PLAN.md`, `PHASE0_MEME_SEARCHER.md`, `CODEX_PROMPTS_PHASE0.md`
+**Primary outcome:** describe a meme in natural language and fetch it if it exists in `data/meme`
+**Authoritative Phase 0 docs:** this file and `PHASE_0_TODO.md`
 **Downstream:** unlocks `PHASE_1_PLAN.md`
 
 ---
 
 ## 1. Purpose
 
-Phase 0 builds an **image-only meme search engine** over a large personal meme corpus. It exists to validate the retrieval spine that every later video phase depends on — **OCR, dense + sparse text retrieval, visual retrieval, RRF fusion, local reranking, OWUI ↔ LiteLLM ↔ backend integration, evaluation, idempotent ingest** — on a dataset where mistakes are cheap to spot and iterations are cheap to run. Nothing about video is built in this phase.
+Phase 0 builds an **image-only local meme search engine** over the corpus already present at `data/meme`.
 
-Phase 0 replaces the infrastructure-only "Phase 0" defined in the original final plan. It keeps that infra milestone as an internal checkpoint (P0-G1) and extends it to a real, useful product: a meme searcher that you actually use.
+The point of Phase 0 is not "stand up infrastructure for later". The point is to ship a working retrieval system that lets the operator type things like:
 
-## 2. Scope
+- "the meme where the cat is yelling at the dinner table"
+- "the one that says i am once again asking"
+- "the drake meme about code review"
+- "that meme where someone looks exhausted and done with life"
+
+and get the actual image back when it exists in the local corpus.
+
+If Phase 0 does not reliably retrieve memes from natural-language description, it has failed, even if all infrastructure is running.
+
+## 2. Success Outcome
+
+Phase 0 is successful when all of the following are true:
+
+- The system indexes the supported files under `data/meme` recursively.
+- A user can query by text description from the API and from Open WebUI.
+- **The end-user deliverable is a working chat app:** the operator opens Open WebUI, types a natural-language description of a meme (text, vibe, or mixed visual+text intent), and the backend fetches the matching image from `data/meme` and renders it inline with the source path and thumbnail. No separate dev UI is required; OWUI is the product surface.
+- Search results return the original image path and a thumbnail for quick inspection.
+- The top results are usually correct on a curated local evaluation set built from the actual corpus.
+- Re-running ingest is idempotent.
+
+This is a **local single-user tool**. No public uploads, multi-tenancy, or hosted serving requirements are part of Phase 0.
+
+## 3. Corpus Contract
+
+Phase 0 starts with the local corpus at `data/meme`.
+
+### 3.1 Starting source
+
+- Initial source root: `data/meme`
+- Recursive scan: yes
+- Follow subdirectories: yes
+- Hidden files: ignore unless they match the supported image extensions
+- Symlinks: do not follow in Phase 0
+
+### 3.2 Supported input formats
+
+Phase 0 must ingest these file extensions:
+
+- `.jpg`
+- `.jpeg`
+- `.png`
+- `.webp`
+- `.gif` using the first frame only
+- `.jfif` treated as JPEG
+
+### 3.3 Explicitly skipped in Phase 0
+
+These must be logged as skipped, not treated as ingest failures:
+
+- `.avif`
+- `.heic`
+- `.svg`
+- `.pdf`
+- `.html`
+- `.js`
+- `.mp3`
+- `.mp4`
+- `.mkv`
+- `.zip`
+- files with no extension
+
+If support for any skipped type is later added, that is a documented scope change, not an ad hoc implementation choice.
+
+Additional corpora may be added later, but the implementation must work correctly with `data/meme` first before any expansion.
+
+### 3.4 Current starting corpus snapshot
+
+As of **2026-04-19**, the local `data/meme` tree contains roughly:
+
+- `3157` files total
+- `3107` files in the supported Phase 0 image extensions
+- `50` files outside the supported set
+
+These counts are a verification baseline, not a hardcoded assumption. The implementation must scan the current filesystem state each run.
+
+### 3.5 Inclusion rule
+
+All supported images under `data/meme` are in scope, including legacy folders such as `Old Memes` and template folders. Do not invent category-based exclusions during implementation.
+
+## 4. Scope
 
 ### In scope
-- Personal meme and image corpus ingest from local folders and optional S3-compatible storage.
-- OCR on every image.
-- BGE-M3 dense + sparse text embeddings over OCR text.
-- SigLIP-2 visual embeddings on every image.
-- Hybrid retrieval in Qdrant with server-side RRF.
-- Local reranking with `jina-reranker-v2-base-multilingual`.
-- Optional VLM verification on top-5 (Gemini 2.5 Flash-Lite primary, local Qwen3-VL-8B fallback).
-- Open WebUI as the primary frontend.
-- LiteLLM as the model gateway.
-- PostgreSQL 17 as the source of truth (image-first schema, video-compatible layout).
-- Qdrant as the vector store with named vectors (`text-dense`, `text-sparse`, `visual`).
-- MinIO for thumbnails and any artifact persistence.
-- 50-query evaluation harness with graded relevance.
-- Content-addressed image IDs via SHA-256.
-- Fully idempotent re-ingest.
 
-### Explicitly out of scope
-- Video fetch / probe / remux.
-- Audio or ASR.
-- Shot detection, window segmentation.
-- Long-video summaries.
-- Graph retrieval.
-- Multi-tenant hosting or public upload UI.
-- CCTV-specific restoration or super-resolution.
-- Captioning **every** image up front (only as a Phase 0 stretch, threshold-driven).
-- Local 30B VLM dependency (the 30B Qwen3-VL UD-IQ2_XXS experiment is deferred to Phase 2).
+- Local folder ingest from `data/meme`
+- OCR on every supported image
+- Dense and sparse text embeddings over OCR text
+- Visual embeddings on every supported image
+- Hybrid retrieval over OCR text plus visual semantics
+- Local reranking
+- FastAPI search API
+- Open WebUI integration through LiteLLM
+- Evaluation harness built from the actual local corpus
+- Idempotent ingest and delete
 
-## 3. Architecture delta from `../ARCHITECTURE.md`
+### Out of scope
 
-Phase 0 is the same architecture with the video-specific branches removed and the segment unit collapsed to "one image = one indexed item".
+- S3 ingest
+- Video ingest
+- Audio or ASR
+- Shot detection, segmentation, or timeline logic
+- Public upload UI
+- Multi-user auth
+- Near-duplicate or perceptual dedupe
+- Query-by-image UI
+- Caption-everything pipelines
 
-### Removed for Phase 0
-- `fetch` with `yt-dlp` / HTTP handling (folder and S3 only).
-- `probe` / MKV remux.
-- TransNetV2, PySceneDetect, overlapping windows.
-- ASR (Parakeet, WhisperX).
-- Caption backfill queue.
-- Per-segment timeline citations.
-- `ops.ingest_steps` for 12 video steps (retained for images but with a shorter step list).
+### Stretch only
 
-### Retained
-- PostgreSQL (same schemas: `core`, `ops`, `eval`, `feedback`).
-- Qdrant with named vectors + RRF + payload indexes.
-- MinIO for artifacts.
-- LiteLLM gateway.
-- Open WebUI frontend (pinned ≥ v0.6.35, Direct Connections disabled).
-- FastAPI backend with SSE.
-- BGE-M3 and SigLIP-2 stacks.
-- `jina-reranker-v2-base-multilingual`.
-- Optional Lane C hosted VLM verification.
-- Content-addressed IDs (SHA-256 of image bytes, no segment_id math for Phase 0).
+- Optional caption generation for weak-OCR images, flag-off by default
+- Query-by-image API support
 
-### Simplified data model
-- `core.images` — one row per unique image SHA-256.
-- `core.image_items` — OCR text, OCR boxes, optional caption, thumbnail URI, flags.
-- Qdrant: one point per image with `text-dense`, `text-sparse`, `visual` named vectors.
+## 5. Architecture
 
-**Forward compatibility rule:** the `core.images` / `core.image_items` split mirrors the future `core.videos` / `core.segments` split so Phase 1 can extend without data migrations.
+Phase 0 keeps the planned retrieval stack, but narrows it to the smallest form that solves the actual local problem.
 
-## 4. Ingest pipeline
+### Required components
+
+- PostgreSQL 17 as source of truth
+- Qdrant with named vectors
+- MinIO for thumbnails
+- LiteLLM as the model gateway
+- FastAPI backend
+- Open WebUI as the operator UI
+- PaddleOCR PP-OCRv5 for OCR
+- BGE-M3 for dense plus sparse text embeddings
+- SigLIP-2 So400m/16-384 for visual embeddings
+- `jina-reranker-v2-base-multilingual` for reranking
+
+### Data model principle
+
+One indexed unit equals one image.
+
+- `core.images` stores identity and file-level facts
+- `core.image_items` stores searchable text and display metadata
+- Qdrant stores one point per image with named vectors
+
+## 6. Ingest Pipeline
 
 ```text
-image file (local folder or S3)
-  -> SHA-256 (image identity)
-  -> metadata extract (path, size, format, width, height)
-  -> thumbnail generation (JPEG Q85, max 512px)
-  -> PaddleOCR PP-OCRv5 (server det + rec)
-  -> OCR normalization (lowercase, collapse whitespace, drop sub-0.6-confidence tokens from embed text only)
-  -> BGE-M3 dense + sparse embeddings on OCR text
-  -> SigLIP-2 So400m/16-384 visual embedding on image
-  -> Postgres upsert (core.images, core.image_items, ops.ingest_steps)
-  -> Qdrant upsert (single point, 3 named vectors, payload)
+filesystem path under data/meme
+  -> extension policy check (supported / skipped)
+  -> SHA-256 of raw bytes
+  -> image decode + metadata extract
+  -> thumbnail generation (JPEG, max 512 px longest side)
+  -> OCR
+  -> OCR normalization
+  -> BGE-M3 dense + sparse embedding
+  -> SigLIP-2 visual embedding
+  -> PostgreSQL upsert
+  -> Qdrant upsert
 ```
 
-Stretch (flag-gated, default off): a caption-on-weak-OCR path routed through LiteLLM `vertical_caption` group, only for images where OCR text length is below a threshold or rank-1 retrieval confidence falls below a threshold.
+### 6.1 Idempotency rule
 
-## 5. Query pipeline
+The identity key is the SHA-256 of the image bytes.
+
+- The same bytes found at multiple paths map to one `image_id`
+- The first seen path becomes `source_uri`
+- Later duplicate paths are recorded in metadata if desired, but do not create new image rows
+- Re-running ingest over the same folder must not duplicate rows or vector points
+
+### 6.2 OCR normalization contract
+
+- Normalize Unicode with NFKC
+- Lowercase for embedding text
+- Collapse repeated whitespace
+- Keep full OCR output in `ocr_full_text`
+- Only exclude OCR tokens below confidence `0.6` from the embedding text
+- Do not drop low-confidence tokens from the stored raw OCR box data
+
+## 7. Query Pipeline
+
+Search is text-first. The user should not need to know whether a query matches via OCR, semantic text, or visual semantics.
 
 ```text
-query text (+ optional query image)
-  -> intent parse (rule-based: exact-text | semantic | visual | mixed | ocr-fuzzy)
+query text
+  -> normalize query
+  -> classify query intent
   -> BGE-M3 dense + sparse encode
-  -> optional SigLIP-2 encode (if image query or visual intent detected)
-  -> Qdrant Query API:
-       prefetch text-dense limit=200,
-       prefetch text-sparse limit=200,
-       prefetch visual limit=200 (conditional)
-       -> RRF fusion -> limit=50
-  -> jina reranker -> top 20
-  -> optional VLM verify on top 5 (Gemini 2.5 Flash-Lite via LiteLLM)
-  -> "why this matched" snippet construction (OCR excerpt + score breakdown)
-  -> stream through FastAPI /search SSE into OWUI
+  -> SigLIP-2 text-tower encode for visual semantics
+  -> Qdrant prefetch:
+       text-dense
+       text-sparse
+       visual
+  -> RRF fusion
+  -> top 50 candidates
+  -> local reranker
+  -> top N response
 ```
 
-Five query types to support:
-1. **Exact text** — "the meme with 'im tired boss'".
-2. **Semantic paraphrase** — "the meme where someone is completely done with life".
-3. **Pure visual** — "the cat screaming at dinner table meme".
-4. **Mixed** — "the Drake meme about code reviews".
-5. **OCR-fuzzy** — partial or misremembered text.
+### 7.1 Canonical query classes
 
-## 6. Data model
+Phase 0 uses exactly four classes:
 
-### `core.images`
+1. `exact_text`
+2. `fuzzy_text`
+3. `semantic_description`
+4. `mixed_visual_description`
+
+Definitions:
+
+- `exact_text`: the user remembers near-verbatim text from the meme
+- `fuzzy_text`: the user remembers partial or slightly wrong OCR text
+- `semantic_description`: the user describes the meaning or situation
+- `mixed_visual_description`: the user combines subject, layout, and meaning such as "drake meme about code review"
+
+These four classes are the only ones used in tests and eval. Do not create a fifth class during implementation.
+
+### 7.2 Retrieval policy
+
+- Always run dense and sparse text retrieval
+- Always run SigLIP text-to-image retrieval for text queries
+- Fuse with Reciprocal Rank Fusion
+- Rerank the fused top 50
+- Return the top 10 by default
+
+## 8. API Contract
+
+Phase 0 must define one canonical search contract and use it everywhere: backend tests, OWUI tool wiring, and eval runner.
+
+### 8.1 `POST /search`
+
+Request body:
+
+```json
+{
+  "query": "the drake meme about code review",
+  "limit": 10,
+  "include_debug": false
+}
+```
+
+Request rules:
+
+- `query` is required, non-empty, UTF-8 text
+- `limit` default is `10`, allowed range `1..20`
+- `include_debug` default is `false`
+
+Response body:
+
+```json
+{
+  "query": "the drake meme about code review",
+  "intent": "mixed_visual_description",
+  "total_returned": 5,
+  "hits": [
+    {
+      "rank": 1,
+      "image_id": "img_sha256_...",
+      "source_uri": "data/meme/Old Memes/Templates/Drake.jpg",
+      "thumbnail_uri": "minio://thumbnails/ab/cd/ef.jpg",
+      "ocr_excerpt": "code review ...",
+      "retrieval_score": 0.4821,
+      "rerank_score": 0.9123
+    }
+  ]
+}
+```
+
+Response rules:
+
+- Results are ordered by final reranked order
+- Every hit includes `image_id`, `source_uri`, and `thumbnail_uri`
+- `ocr_excerpt` may be empty if OCR is absent
+- `retrieval_score` is the fused retrieval score before reranking
+- `rerank_score` is present when reranking ran
+
+### 8.2 SSE behavior
+
+Phase 0 may stream the search flow, but the final payload schema must still match the non-streaming `SearchResponse`.
+
+Allowed SSE events:
+
+- `search_started`
+- `retrieval_complete`
+- `rerank_complete`
+- `search_completed`
+- `search_error`
+
+The `search_completed` event payload must contain the same JSON shape as the normal `SearchResponse`.
+
+### 8.3 Open WebUI tool contract
+
+Open WebUI integration must call the same `POST /search` endpoint. Do not invent a second search format for the UI.
+
+## 9. Data Model
+
+### 9.1 `core.images`
+
 | column | type | notes |
 |---|---|---|
-| `image_id` | TEXT PK | derived from SHA-256; stable identity |
-| `sha256` | BYTEA UNIQUE | raw bytes, not hex |
-| `source_uri` | TEXT | first observed location |
-| `width`, `height` | INT | |
-| `format` | TEXT | `jpeg` / `png` / `webp` / `gif` (first frame) |
+| `image_id` | TEXT PK | stable ID derived from SHA-256 |
+| `sha256` | BYTEA UNIQUE | raw digest bytes |
+| `source_uri` | TEXT | first observed filesystem path |
+| `width` | INT | required |
+| `height` | INT | required |
+| `format` | TEXT | normalized format label |
 | `ingested_at` | TIMESTAMPTZ | default `now()` |
-| `metadata` | JSONB | optional free-form (exif, album, etc.) |
+| `metadata` | JSONB | optional |
 
-### `core.image_items`
+### 9.2 `core.image_items`
+
 | column | type | notes |
 |---|---|---|
-| `image_id` | TEXT FK | one row per image |
-| `thumbnail_uri` | TEXT | MinIO key |
-| `ocr_text` | TEXT | concatenated, high-confidence tokens only |
-| `ocr_full_text` | TEXT | all tokens including low-confidence (used for surface trigram recall) |
+| `image_id` | TEXT PK FK | one row per image |
+| `thumbnail_uri` | TEXT | MinIO object key or URI |
+| `ocr_text` | TEXT | normalized OCR text used for embeddings |
+| `ocr_full_text` | TEXT | full OCR text for debug and trigram recall |
 | `ocr_boxes` | JSONB | list of `{text, conf, bbox}` |
-| `caption_text` | TEXT NULL | optional |
-| `caption_model` | TEXT NULL | |
-| `has_ocr` | BOOL | |
-| `has_caption` | BOOL | |
-| `created_at` | TIMESTAMPTZ | |
+| `caption_text` | TEXT NULL | stretch only |
+| `caption_model` | TEXT NULL | stretch only |
+| `has_ocr` | BOOL | required |
+| `has_caption` | BOOL | required |
+| `created_at` | TIMESTAMPTZ | default `now()` |
 
-### Qdrant
-- Collection alias `memes` → physical `memes_v1`.
-- Named vectors: `text-dense` (1024, BGE-M3 dense, cosine, int8 quant), `text-sparse` (BGE-M3 sparse, IDF modifier), `visual` (1152, SigLIP-2, cosine, binary quant).
-- Payload indexes: `image_id`, `has_ocr`, `has_caption`, `format`, `width`, `height`, `ingested_at`, `model_version`.
-- Same alias-cutover discipline as the video plan.
+### 9.3 `ops.ingest_steps`
 
-## 7. Test strategy
+Required checkpoints per image:
 
-Phase 0 tests sit in four layers: **unit**, **integration**, **end-to-end vertical**, **regression eval**. Every PR runs layers 1–3; layer 4 runs nightly on the full corpus and on merge to `main`.
+- `hash`
+- `decode`
+- `thumbnail`
+- `ocr`
+- `embed_text`
+- `embed_visual`
+- `upsert_pg`
+- `upsert_qdrant`
 
-### 7.1 Unit tests
-- `vidsearch/ids.py::image_id` — deterministic for identical bytes, disjoint on re-encoding.
-- OCR normalizer — confidence thresholding, whitespace collapse, unicode NFKC, low-confidence exclusion from embed text but retention in `ocr_full_text`.
-- Query intent parser — five query types land in the right bucket with a 20-example fixture set.
-- BGE-M3 encoder wrapper — dense and sparse shapes/types.
-- SigLIP-2 encoder wrapper — 1152-dimensional output, batch-safe.
-- LiteLLM client wrapper — 429 advances fallback, never retries past the last provider.
+State values:
 
-### 7.2 Integration tests (with live local services via `docker compose`)
-- Ingest one meme image end-to-end: rows appear in `core.images`, `core.image_items`, `ops.ingest_steps`; a single Qdrant point is present with three named vectors.
-- Second invocation on the same image is a full cache hit: `ops.ingest_steps.state='done'` for every step, zero new Postgres rows, zero Qdrant upserts (or an idempotent upsert with identical payload).
-- Batch ingest of 100 memes finishes without partial writes; per-file failures are logged and surface in an end-of-run summary.
-- `/search` returns at least one hit for a query whose exact OCR text is present in the corpus.
-- OWUI → LiteLLM → `/search` round-trip returns a grounded answer with thumbnail URIs.
+- `pending`
+- `done`
+- `skipped`
+- `error`
 
-### 7.3 End-to-end vertical
-- **Stage 0 gate (P0-G1):** `docker compose up -d` boots healthy; Postgres schema applied; Qdrant collection and alias created; LiteLLM config passes `--check`; OWUI connects to LiteLLM and lists the Gemini-backed model group.
-- **Stage 1 gate (P0-G2):** 1,000 memes ingested; spot-check 10 random memes; all five query types return correct rank-1 in a curated mini-set of 10 queries.
-- **Stage 2 gate (P0-G3):** FastAPI `/search`, `/ingest/image`, `/ingest/folder`, `/feedback`, `/health` live; OWUI tool call succeeds.
-- **Stage 3 gate (P0-G4):** 50-query eval set executed; metrics written to `eval.metrics`; baseline recorded.
-- **Stage 4 gate (P0-G5):** scale to 10,000+ memes; re-run eval; metrics hold.
+### 9.4 Qdrant
 
-### 7.4 Regression eval
-- 50 graded queries stored in `vidsearch/eval/queries_memes.yaml`.
-- Split: 15 exact/OCR, 15 semantic, 10 visual, 10 mixed.
-- Metrics: `nDCG@10`, `Recall@10`, `Recall@50`, `MRR`, `top-1 exact hit rate`, `reranker uplift over raw fusion`.
-- Judges: seed with LLM judge (Gemini 2.5 Pro via LiteLLM) on a 20-query subset for calibration; the other 30 queries are hand-labelled. Both judges stored in `eval.qrels.judge` for bias analysis.
-- CI gate (phase-internal, before P0-G5): a metric regression of more than 3 percentage points versus the previous stored run blocks merge unless the waiver is recorded in `docs/decision_log.md`.
+- Collection alias: `memes`
+- Physical collection: `memes_v1`
+- Named vectors:
+  - `text-dense` = 1024 dims, cosine
+  - `text-sparse` = BGE-M3 sparse
+  - `visual` = 1152 dims, cosine
+- Required payload fields:
+  - `image_id`
+  - `source_uri`
+  - `thumbnail_uri`
+  - `format`
+  - `width`
+  - `height`
+  - `has_ocr`
+  - `has_caption`
+  - `ingested_at`
+  - `model_version`
 
-## 8. Verification criteria (quantitative)
+## 10. Evaluation
 
-Phase 0 is **done** when all of the following hold simultaneously:
+The evaluation set must be built from actual files inside `data/meme`.
 
-| Criterion | Target |
-|---|---|
-| Images indexed | ≥ 10,000 |
-| Idempotent re-ingest | 0 duplicate rows, 0 redundant Qdrant points on second run |
-| Eval set size | 50 queries, five classes |
-| `nDCG@10` (reranked) | ≥ a project-chosen threshold; at minimum "clearly useful to the operator" with a documented score snapshot committed to `docs/decision_log.md` |
-| Reranker uplift | ≥ +2 points `nDCG@10` over raw RRF on the same 50-query set |
-| OWUI tool round-trip | < 20 s P95 (latency is not a hard constraint but a sanity cap) |
-| Hosted-provider independence | Core retrieval path works with every Lane C provider disabled; only optional VLM verification is allowed to go dark |
-| Backup/restore proof | Postgres `pg_dump` + Qdrant snapshot both round-trip on a scratch container |
-| Delete/retract flow | Removing an image deletes its Postgres rows, Qdrant point, and thumbnail in one call |
+### 10.1 Eval size and split
 
-## 9. Closing gates
+Phase 0 uses a curated **40-query** eval set:
 
-Gates are ordered. A later gate cannot close until every earlier gate is green.
+- 10 `exact_text`
+- 10 `fuzzy_text`
+- 10 `semantic_description`
+- 10 `mixed_visual_description`
 
-- **P0-G1 — Infra boots.** Compose stack healthy; DDL applied; Qdrant alias created; LiteLLM `--check` green; OWUI connects; `.env.example` covers every variable; README has a zero-to-boot quickstart.
-- **P0-G2 — Ingest one, then many.** One image end-to-end through every Phase 0 step; idempotent re-run proven; 1,000-meme batch ingest with a written summary of failures.
-- **P0-G3 — Search serves.** FastAPI endpoints live with Pydantic contracts; OWUI can call `/search` as an OpenAI-compatible tool; hits include thumbnail URI, OCR excerpt, scores, source URI.
-- **P0-G4 — Rerank + eval.** Local reranker integrated; 50-query eval run recorded in `eval.runs` with a `config_hash`; reranker uplift documented.
-- **P0-G5 — Scale + harden.** 10,000+ memes indexed; delete flow works; backup/restore proven; optional captioning is **flag-off by default** and only tested as a stretch path.
-- **P0-G6 — Transition readiness.** `docs/phase1_short_clips_transition.md` drafted; every Phase 0 module has a re-use note for Phase 1; no scope-creep code merged (no ASR, no segmentation, no graph).
+### 10.2 Labels
 
-Only when P0-G1 through P0-G6 are all closed does Phase 1 begin.
+- Label against the local corpus only
+- Graded relevance `0..3`
+- At least top 10 candidates judged per query
 
-## 10. Dependencies and sequencing
+### 10.3 Metrics
 
-- **External dependencies:** Gemini API key (optional), OpenRouter key (optional), running Docker Desktop with WSL integration, 4060 Ti driver ≥ 566.
-- **Internal dependencies:** Git initialised at the repo root (the repo is currently *not* a git repo); this is a one-time action before any Phase 0 work.
-- **Model assets already on disk** (`K:\models\video_searcher`): `bge-m3`, `siglip2-so400m-patch16-384`, `PP-OCRv5_server_det`, `PP-OCRv5_server_rec`, `jina-reranker-v2-base-multilingual`, optional `Qwen3-VL-8B-Instruct-GGUF`. ASR directories are ignored in Phase 0.
+- `nDCG@10`
+- `Recall@10`
+- `Recall@50`
+- `MRR`
+- `top_1_hit_rate`
+- `reranker_uplift_ndcg10`
 
-## 11. Rollback / abort triggers
+### 10.4 Acceptance thresholds
 
-Abort Phase 0 and re-scope if **any** of the following hold after a real corpus test:
+Phase 0 is not done unless the baseline run on the local corpus meets all of these:
 
-1. Hybrid retrieval quality on the 50-query set is materially worse than dense-only BGE-M3 retrieval alone (signals a Qdrant wiring bug or sparse-index regression).
-2. Ingest cannot remain idempotent under real failures (signals a content-addressing bug).
-3. PaddleOCR PP-OCRv5 is unusable on the target meme corpus (fallback: swap in `PP-OCR mobile` or an earlier PP-OCR release before changing architecture).
-4. BGE-M3 sparse vectors drown out dense in RRF (tune the prefetch sizes and IDF modifier first; architecture change only if tuning does not recover).
+- `Recall@10 >= 0.90`
+- `top_1_hit_rate >= 0.70`
+- `reranker_uplift_ndcg10 >= 0.02`
+- No exact-text query misses the correct meme outside the top 10
 
-## 12. Deliverables
+If the first full run misses these thresholds, the team tunes retrieval and reranking before declaring Phase 0 complete.
 
-- `docker-compose.yml`, optional `docker-compose.observability.yml`.
-- `.env.example` with every variable.
-- `infra/postgres/001_schema.sql` (image schema; video schema is a Phase 1 additive migration).
-- `infra/qdrant/bootstrap.py` (idempotent `memes_v1` collection + alias).
-- `infra/litellm/config.yaml` skeleton (at least `vertical_caption` group using Gemini Flash-Lite and OpenRouter Nemotron fallback, `verify`, `judge`).
-- `vidsearch/` package: `ingest/images.py`, `query/retrieve_images.py`, `query/rerank_images.py`, `api/main.py`, `api/contracts.py`, `eval/queries_memes.yaml`, `eval/runner.py`, `eval/metrics.py`.
-- 50-query eval set with graded labels.
-- `docs/decision_log.md` updated with Phase 0 ADRs (image-first schema, OCR confidence threshold, reranker uplift baseline).
-- `docs/runbook.md` quickstart covering boot, ingest, search, eval, backup/restore, delete.
-- `docs/phase1_short_clips_transition.md` (Phase 0 exit artifact).
+## 11. Gates
 
-## 13. Risk register (Phase 0-specific)
+Gates are sequential. A later gate cannot close before every earlier gate is green.
+
+### P0-G1 - Infra boots
+
+- `docker compose up -d` is healthy
+- Postgres schema applies cleanly
+- Qdrant collection and alias exist
+- LiteLLM config passes validation
+- Open WebUI connects through LiteLLM
+- README and `.env.example` are sufficient to boot from a fresh clone
+
+### P0-G2 - Ingest works on the real corpus
+
+- One image ingests end-to-end
+- Re-running one image is idempotent
+- Folder ingest over `data/meme` processes all supported files recursively
+- Unsupported files are reported as skipped
+- End-of-run summary reports success, skipped, duplicate, failed
+
+### P0-G3 - Search serves (chat-app end-state)
+
+- `POST /search` returns useful ranked hits for known queries
+- Response contract matches the canonical schema
+- Open WebUI can call the search tool
+- Hits include source path and thumbnail
+- **Chat-app walk-through passes:** in OWUI, the operator types a plain-English meme description, the tool call fires `POST /search`, and the rendered chat response shows the matching image from `data/meme` inline with the source path and thumbnail. The transcript from at least 5 such queries (one per intent class plus one general probe) is pasted into `docs/owui_integration.md` as the `P0-G3` evidence log before the gate is declared closed.
+
+### P0-G4 - Retrieval quality is acceptable
+
+- 40-query eval set exists
+- Eval runner writes metrics to Postgres
+- Baseline metrics meet the thresholds in section 10.4
+
+### P0-G5 - Operations are safe
+
+- Delete flow removes Postgres rows, Qdrant point, and thumbnail
+- Backup and restore runbook is proven on a scratch stack
+- Structured logging exists for ingest and API flows
+
+### P0-G6 - Transition readiness
+
+- `docs/phase1_short_clips_transition.md` exists
+- Phase 1 carry-over interfaces are documented
+- No video-specific code is required to use the Phase 0 meme searcher
+
+## 12. Implementation Sequence
+
+Implementation should happen in this order:
+
+1. Infra and local boot
+2. Schema and Qdrant bootstrap
+3. Single-image ingest
+4. Folder ingest over `data/meme`
+5. Retrieval and reranking
+6. FastAPI contract
+7. Open WebUI integration
+8. Evaluation harness
+9. Delete plus backup plus restore hardening
+
+If work starts in a different order, the builder must justify the deviation in `docs/decision_log.md`.
+
+## 13. Deliverables
+
+- `docker-compose.yml`
+- `.env.example`
+- `infra/postgres/001_schema.sql`
+- `infra/qdrant/bootstrap.py`
+- `infra/litellm/config.yaml`
+- `vidsearch/ids.py`
+- `vidsearch/ingest/images.py`
+- `vidsearch/query/encoders.py`
+- `vidsearch/query/intent.py`
+- `vidsearch/query/retrieve_images.py`
+- `vidsearch/query/rerank_images.py`
+- `vidsearch/api/main.py`
+- `vidsearch/api/contracts.py`
+- `vidsearch/eval/queries_memes.yaml`
+- `vidsearch/eval/runner.py`
+- `vidsearch/eval/metrics.py`
+- `docs/decision_log.md`
+- `docs/runbook.md`
+- `docs/owui_integration.md`
+- `docs/phase1_short_clips_transition.md`
+
+## 14. Dependencies and Assumptions
+
+- Docker Desktop is available
+- The repo is already a git repo; Phase 0 does not include `git init`
+- Local model assets are expected under `K:\models\video_searcher`
+- Hosted API keys are optional unless optional verification or captioning is enabled
+
+## 15. Risks
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| PaddleOCR PP-OCRv5 misreads stylised meme text | High | Keep `ocr_full_text` trigram-indexed for fuzzy recall; never gate retrieval on OCR perfection |
-| BGE-M3 sparse vectors polluted by OCR noise | Medium | 0.6 confidence threshold for embedded text; `ocr_full_text` retained separately |
-| SigLIP-2 underperforms on memes with heavy text overlay | Medium | RRF weighting favours text-dense + text-sparse when OCR text is present; visual prefetch still runs but does not dominate |
-| Gemini or OpenRouter free tiers throttle mid-eval | Low | VLM verification is optional; eval uses offline judge runs cached in `eval.qrels` |
-| 10,000-image ingest hits local disk I/O limits | Low | MinIO on the same NVMe; batch size tuned; thumbnail compression keeps disk pressure low |
-| Re-encoded memes ingested as duplicates | Medium | SHA-256 on raw bytes detects byte-identical files; near-duplicates accepted as distinct IDs in Phase 0 (perceptual-hash dedupe is a Phase 2 item) |
-| Scope creep toward video before exit gates close | High | Prompt 15 anti-scope-creep rule enforced; PRs adding ASR/segmentation/graph are rejected at review |
+| OCR misses stylized meme text | High | rely on dense, sparse, and visual retrieval together |
+| Local corpus contains messy non-image files | High | explicit skip policy and per-run scan summary |
+| Duplicate files across folders inflate ingest | Medium | SHA-256 identity and duplicate short-circuit |
+| Reranker adds latency without quality gain | Medium | track uplift and disable only if metrics justify it |
+| Open WebUI tool wiring drifts from API schema | Medium | single canonical `POST /search` contract |
 
-## 14. Interfaces reserved for Phase 1
+## 16. Reserved for Phase 1
 
-To keep Phase 1 additive rather than disruptive, Phase 0 commits to these interfaces:
+These interfaces must stay reusable:
 
-- `vidsearch/query/encoders.py` — encoder functions are format-agnostic; they work on text and images, and will be reused when video segments produce text/keyframes.
-- `vidsearch/query/rerank.py` — reranker accepts `(query, list[candidate])` where `candidate` is a generic retrieval hit; adding video segments does not change the signature.
-- `core.images` / `core.image_items` mirror `core.videos` / `core.segments`; Phase 1 adds a `kind` column on the segments side, not on images.
-- Qdrant collection alias `memes` stays image-only. Phase 1 introduces a parallel `video_segments` alias; both coexist. A unified `all_media` alias is a Phase 3 decision, not Phase 1.
+- `vidsearch/query/encoders.py`
+- `vidsearch/query/retrieve_images.py`
+- `vidsearch/query/rerank_images.py`
+- `vidsearch/api/contracts.py`
+
+Phase 1 extends them for short video clips. Phase 0 must not depend on any video-only concepts.
 
 ---
 
-**Phase 0 exit sentence:** a meme search engine that the operator actually uses, with a reproducible eval, an idempotent ingest, an OWUI tool flow, and a written transition plan to Phase 1.
+**Phase 0 exit sentence:** a local meme search engine that indexes `data/meme`, lets the operator describe a meme in text, and returns the image if it exists, with measured retrieval quality and idempotent ingest.

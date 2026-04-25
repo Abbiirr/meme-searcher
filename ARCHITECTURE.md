@@ -1,8 +1,10 @@
 # ARCHITECTURE.md — Local-first multimodal video search engine
 
-**Version**: 2026-04-18 (final merged)
-**Status**: Implementation-ready — Phase 0 freeze artifacts locked
+**Version**: 2026-04-18 (final merged + meme-first Phase 0 folded in)
+**Status**: Implementation-ready — Phase 0 freeze artifacts locked; meme-searcher Phase 0 is the first build step
 **Audience**: engineers building this POC; future maintainers; agent workflows executing the checklist
+
+> **2026-04-18 update — meme-first Phase 0.** The previous "Phase 0" was an infra-only bootstrap. It has been superseded by a **meme-first Phase 0** that builds a complete image-only search product (Section 24) before any video-specific code is written. The previous §24 (Phase 1 week-by-week) has moved to §25, and the subsequent sections renumber by one. Per-phase deep-dives live in `docs/PHASE_0_PLAN.md` … `docs/PHASE_5_PLAN.md` and their matching `docs/PHASE_X_TODO.md` files.
 
 ---
 
@@ -14,9 +16,9 @@ The document has three parts that you should read in order:
 
 1. Sections 1–12 describe **what we are building and why**. Each decision carries a short rationale so future-you (or someone else) understands not just what was chosen but what it was chosen *over*.
 2. Sections 13–23 are **engineering artifacts ready to copy into the repository**: the PostgreSQL DDL, the Qdrant collection config, the LiteLLM gateway config, the Docker Compose service list, and the Prefect flow skeleton. These are the Phase 0 freeze artifacts.
-3. Sections 24–27 are **execution**: the week-by-week Phase 1 schedule, the phase-gated roadmap through Phase 5, and a strict prioritized checklist that doubles as a to-do list.
+3. Sections 24–28 are **execution**: §24 the image-only Phase 0 meme searcher (the first build step), §25 the week-by-week Phase 1 schedule, §26 the phase-gated roadmap through Phase 5, §27 the risk register, and §28 a strict prioritized checklist that doubles as a to-do list.
 
-If you want a single starting point, jump to Section 27 — the prioritized checklist — and begin at Priority 0.
+If you want a single starting point, jump to Section 28 — the prioritized checklist — and begin at Priority 0 → Priority 0A (meme searcher) → Priority 1.
 
 ---
 
@@ -108,7 +110,7 @@ A small custom developer-only UI may still be useful for inspecting raw retrieva
 
 ### 4.1 Security note — required version pin
 
-Open WebUI had a high-severity vulnerability (CVE-2025-64496) in the Direct Connections feature. Per NVD, affected versions are those **before 0.6.35**; the fix landed in **0.6.35**. In practice, we pin to the **latest patched stable release** (at minimum `v0.6.35+`), keep Direct Connections disabled, only connect OWUI to our own LiteLLM proxy, and restrict `workspace.tools` permission to explicit operator accounts. This is an operational rule, not a suggestion.
+Open WebUI had a high-severity vulnerability (CVE-2025-64496) in the Direct Connections feature. Per NVD, affected versions are those before `0.6.35`; the fix landed in `0.6.35`. In practice, this repo now pins OWUI to `v0.9.1`, keeps Direct Connections disabled, only connects OWUI to the internal LiteLLM proxy, and restricts `workspace.tools` permission to explicit operator accounts. This is an operational rule, not a suggestion.
 
 ---
 
@@ -124,7 +126,7 @@ The RTX 4060 Ti cannot host both heavy Lane A ingest (Parakeet ASR, PaddleOCR, S
 
 ## 6. Storage architecture
 
-**PostgreSQL 17** is the authoritative store for every piece of state that is not a vector: videos, segments, jobs, ingest step status, the model version registry, evaluation queries and runs, human and LLM judgments, and user feedback. Postgres is the source of truth; the vector store and object store are both rebuildable from Postgres rows alone. SQLite was explicitly rejected because we need concurrent writers, JSONB and full-text search, transactional schema evolution, and the cross-database co-tenant pattern.
+**PostgreSQL 18** is the authoritative store for every piece of state that is not a vector: videos, segments, jobs, ingest step status, the model version registry, evaluation queries and runs, human and LLM judgments, and user feedback. Postgres is the source of truth; the vector store and object store are both rebuildable from Postgres rows alone. SQLite was explicitly rejected because we need concurrent writers, JSONB and full-text search, transactional schema evolution, and the cross-database co-tenant pattern.
 
 **MinIO** stores everything that is a binary artifact: source video copies, remuxed videos, extracted audio tracks, keyframes, transcript JSON artifacts, OCR artifacts, optional captions and summaries, Qdrant snapshots, and backups. For a single-node POC, MinIO is overkill relative to a plain filesystem, but it gives us S3 semantics now so Phase 5 migration to AWS/GCS/R2 is a credentials change.
 
@@ -615,7 +617,7 @@ For Phase 1, observability is deliberately minimal: LiteLLM's `success_callback:
 
 Security is single-tenant by default. No public exposure, everything behind the workstation's local network. Artifacts at rest are expected to be on an encrypted filesystem (LUKS/BitLocker on the NVMe holding MinIO). Transcripts and OCR output are treated as potentially sensitive — some user corpora will contain personal or proprietary content, and hosted caption or judge calls route that content through external providers. The operational policy is: any hosted call is logged with provider, model, timestamp, and input hash, so the operator can audit what left the workstation.
 
-Open WebUI is pinned to a **patched stable release** (at minimum `v0.6.35+`, per the CVE-2025-64496 fix), Direct Connections is disabled, and only the internal LiteLLM service is a connected backend. This is not negotiable.
+Open WebUI is pinned to a patched stable release (`v0.9.1` in the current repo), Direct Connections is disabled, and only the internal LiteLLM service is a connected backend. This is not negotiable.
 
 ---
 
@@ -747,7 +749,38 @@ class SearchResponse(BaseModel):
 
 ---
 
-## 24. Phase 1 — week-by-week vertical slice
+## 24. Phase 0 — Meme searcher (image-only, first build step)
+
+Phase 0 builds a complete **image-only** meme search engine and, in doing so, proves every subsystem that the video product will later depend on: Docker Compose stack, Postgres 18 schema, Qdrant hybrid retrieval with named vectors, content-addressed IDs, PaddleOCR, BGE-M3 dense + sparse text retrieval, SigLIP-2 visual retrieval, server-side RRF fusion, `jina-reranker-v2-base-multilingual` local rerank, LiteLLM gateway, Open WebUI as the frontend, a **40-query evaluation harness (10 per class × 4 classes)** with graded qrels, idempotent ingest, a backup/restore drill, and a delete/retract flow. **No video-specific code is written in Phase 0** — no ASR, no shot segmentation, no overlapping windows, no keyframe extraction for video, no caption backfill scheduler (it becomes a Phase 2 deliverable). The starting corpus is `data/meme` (~3,107 supported images); S3/object-store ingest is deferred to Phase 2+. The query contract is **text-only**; user-supplied query images are out of Phase 0 scope. The full plan is in `docs/PHASE_0_PLAN.md`; the checklist is `docs/PHASE_0_TODO.md`; those two files are the authoritative Phase 0 contract.
+
+The Phase 0 schema uses image-specific tables (`core.images`, `core.image_items`) that are deliberately shaped to mirror the Phase 1 video tables (`core.videos`, `core.segments`) so Phase 1 becomes an **additive** migration: new tables, a new `video_segments_v1` Qdrant collection, no breaking changes to the image tables or the `memes_v1` collection. The `all_media` alias decision (whether to expose both collections under a single Qdrant alias) is deferred to Phase 3.
+
+The Phase 0 ingest pipeline has seven steps:
+
+1. Fetch bytes (`file://` or `https://`) by SHA-256.
+2. Probe with Pillow / `imghdr`; reject non-images; recompute the canonical SHA-256.
+3. Run PaddleOCR PP-OCRv5; confidence threshold 0.6; keep raw boxes.
+4. Compute BGE-M3 dense + sparse vectors on concatenated OCR text (captions can be added later via Lane C, never required for first-pass retrieval).
+5. Compute SigLIP-2 So400m/16-384 visual vector on the canonical image bytes.
+6. Upsert `core.images` + `core.image_items` + MinIO object; idempotency is keyed on `image_id = sha256(canonical_bytes)`.
+7. Upsert the Qdrant point into `memes_v1` with named vectors `text-dense`, `text-sparse`, `visual`.
+
+The Phase 0 query pipeline reuses the full retrieval spine: BGE-M3 encode → Qdrant Query API prefetch (dense + sparse + visual) → server-side RRF → local rerank → FastAPI SSE into OWUI. `group_by` is disabled in Phase 0 (no video grouping exists yet); it becomes mandatory in Phase 1.
+
+The Phase 0 closing gates (details in `docs/PHASE_0_PLAN.md` §9) are:
+
+- **P0-G1 — Stack boots green.** Compose up, schema applied, alias live, LiteLLM round-trip verified, OWUI lists model groups.
+- **P0-G2 — Ingest at scale.** Full `data/meme` corpus ingested (~3,107 supported images); second batch run is a full cache hit; content-addressed dedupe proven; corpus-count baseline pinned as an ADR in `docs/decision_log.md`.
+- **P0-G3 — Retrieval quality.** 40-query eval (10 per class × 4 classes) baseline recorded with a `config_hash`; reranker uplift ≥ +2 pp over RRF-only.
+- **P0-G4 — Frontend grounded.** OWUI renders thumbnails, image-level citations, and P95 end-to-end latency < 20 s.
+- **P0-G5 — Operational safety.** Backup + restore drill logged; `/image/{id}` DELETE flow removes Postgres + Qdrant + MinIO artifacts with a tombstone in `ops.purges`.
+- **P0-G6 — Transition artifact.** `docs/phase1_short_clips_transition.md` signed off; it enumerates the additive schema deltas, the Qdrant coexistence plan, and the reserved Phase 1 interfaces.
+
+Phase 0 is **done** when all six gates close, the 40-query meme eval `nDCG@10` with the reranker on beats the RRF-only baseline by at least +2 percentage points, and no code merged during Phase 0 assumes the future existence of video segments.
+
+---
+
+## 25. Phase 1 — week-by-week vertical slice
 
 Phase 1 delivers a complete vertical slice through all four layers in three weeks, and proves the architecture end to end before any scale-out work begins.
 
@@ -781,7 +814,9 @@ gantt
 
 ---
 
-## 25. Phases 2–5 — execution roadmap
+## 26. Phases 2–5 — execution roadmap
+
+_Phase 0 (§24, `docs/PHASE_0_PLAN.md`) and Phase 1 (§25) must close before Phase 2 begins. Each of the remaining phases has a dedicated `docs/PHASE_N_PLAN.md` + `docs/PHASE_N_TODO.md` pair with a test strategy, verification criteria, and closing gates (`P<N>-G<n>`)._
 
 **Phase 2 (4 weeks) — scale ingest, Lane B, caption backfill.** Ingest the full corpus. Deploy the rate-aware caption backfill scheduler. Run Lane B validation (G1–G5) on the three candidate VLMs — `Qwen3-VL-30B-A3B UD-IQ2_XXS` first, then `Qwen3-VL-8B-Instruct`, then `MiniCPM-V 4.5 int4`. Promote at most one candidate to the `vertical_caption` model group in LiteLLM. Exit criterion: at least 80% of the corpus has captions, every segment is indexed in Qdrant, and either one Lane B VLM has passed all five gates or Lane C is explicitly documented as the sole caption path for the POC.
 
@@ -793,7 +828,7 @@ gantt
 
 ---
 
-## 26. Risks and mitigations
+## 27. Risks and mitigations
 
 | Risk | Category | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
@@ -812,11 +847,11 @@ gantt
 | Postgres single point of failure | Architectural | Medium | High | Phase 5 adds PITR and a standby; Phases 1–4 use hourly `pg_dump` to MinIO |
 | Corrupt or exotic-codec video files | Data | Medium | Low | `probe` fallback remuxes to MKV; persistent failures route to `ops.jobs.error` |
 | OCR noise polluting the sparse index | Quality | High | Medium | Confidence below 0.6 excluded from embedded text but kept in `ocr_boxes` for trigram surface |
-| OWUI Direct Connections CVE exploited | Security | Low after pin | Critical | v0.6.35+ pin, Direct Connections disabled, only LiteLLM as connected backend |
+| OWUI Direct Connections CVE exploited | Security | Low after pin | Critical | `v0.9.1` pin, Direct Connections disabled, only LiteLLM as connected backend |
 
 ---
 
-## 27. Strict prioritized checklist
+## 28. Strict prioritized checklist
 
 This is a todo-list, ordered by strict priority. Do not skip levels. A later priority that depends on an earlier one is explicitly flagged.
 
@@ -830,9 +865,27 @@ This is a todo-list, ordered by strict priority. Do not skip levels. A later pri
 - [ ] Apply the Postgres schema from Section 13.
 - [ ] Bootstrap the Qdrant collection and alias per Section 14.
 - [ ] Validate the LiteLLM config: `litellm --config infra/litellm/config.yaml --check` returns green.
-- [ ] Pin OWUI to the latest patched stable image (at minimum `ghcr.io/open-webui/open-webui:v0.6.35+`).
+- [x] Pin OWUI to the latest patched stable image used by this repo (`ghcr.io/open-webui/open-webui:v0.9.1`).
 - [ ] Confirm OWUI connects to LiteLLM at `http://litellm:4000/v1` as an OpenAI-compatible backend.
 - [ ] Confirm LiteLLM reaches at least one hosted provider end-to-end (Gemini is easiest because it has the most generous free tier).
+
+### Priority 0A — Phase 0 meme searcher (image-only; blocks Priority 1)
+
+_Full plan in `docs/PHASE_0_PLAN.md`; full checklist in `docs/PHASE_0_TODO.md`; closing gates P0-G1…P0-G6._
+
+- [ ] Apply image-only schema: `core.images`, `core.image_items`, `ops.purges` (tombstones). Keep the shape forward-compatible with the Phase 1 `core.videos` / `core.segments` tables so Phase 1 is an additive migration.
+- [ ] Bootstrap Qdrant collection `memes_v1` with named vectors `text-dense` (1024d, cosine), `text-sparse` (BGE-M3 SPLADE), `visual` (1152d, cosine, SigLIP-2 So400m/16-384); create alias `memes` → `memes_v1`.
+- [ ] Implement `vidsearch/ids.py` with `image_id(bytes) = sha256(canonical_bytes)` and property-based tests (determinism, collision-freeness across re-encodes, disjointness across version bumps).
+- [ ] Implement single-image ingest (fetch → probe → PaddleOCR PP-OCRv5 → BGE-M3 dense+sparse on concatenated OCR text → SigLIP-2 visual → Postgres upsert → MinIO put → Qdrant upsert); re-run is a full cache hit.
+- [ ] Batch ingest the `data/meme` corpus (~3,107 supported images) through Prefect with GPU concurrency capped at the single-GPU budget; prove idempotency on the full batch; pin corpus-count baseline (seen / supported / ingested / duplicate / skipped / failed) as an ADR in `docs/decision_log.md`.
+- [ ] Implement `vidsearch/query/` for the image path: BGE-M3 encode → Qdrant Query API prefetch (dense + sparse + visual) → server-side RRF → local rerank with `jina-reranker-v2-base-multilingual`.
+- [ ] Implement FastAPI `/search` SSE endpoint; register as an OpenAI-compatible tool in OWUI; render thumbnails + grounded citations in the OWUI response.
+- [ ] Build the **40-query meme eval set — exactly 10 per class × 4 classes: `exact_text`, `fuzzy_text`, `semantic_description`, `mixed_visual_description`**; grade top-20 per query with graded labels 0..3; record baseline `nDCG@10` with a `config_hash` and the reranker uplift. Source of truth: `docs/PHASE_0_PLAN.md` §10.1.
+- [ ] **Gate P0-G3:** reranker uplift ≥ +2 pp over the RRF-only baseline on the 40-query eval.
+- [ ] Optional caption backfill via Lane C (`Gemini 2.5 Flash-Lite`) behind a feature flag; captions feed BGE-M3 but are **never** required for first-pass retrieval.
+- [ ] Prove backup/restore drill on a scratch Compose project: `pg_dump` restore + Qdrant snapshot restore + MinIO restore; sampled eval `nDCG@10` within 1 pp of live.
+- [ ] Prove delete / retract flow: `DELETE /image/{id}` removes Postgres rows + Qdrant point + MinIO object, writes tombstone row in `ops.purges`.
+- [ ] Write `docs/phase1_short_clips_transition.md` — the forward-compatibility contract Phase 1 must honour (additive schema deltas, new `video_segments_v1` collection, reserved Phase 1 interfaces).
 
 ### Priority 1 — Build the stable local core (Lane A)
 
@@ -913,14 +966,14 @@ This is a todo-list, ordered by strict priority. Do not skip levels. A later pri
 
 ---
 
-## 28. Final implementation verdict
+## 29. Final implementation verdict
 
 This plan is ready to build. Three strict caveats are already baked in.
 
 First, **do not use Qwen3.6 as the primary vision model**. Use Qwen3-VL locally for Lane B captioning and verification. Use Qwen3.6-35B-A3B only as the controller and synthesis model. The GGUF ecosystem, the `mmproj` tooling, and Qwen's own product positioning all point in this direction.
 
-Second, **use Open WebUI as the frontend**, pinned to the latest patched stable release (at minimum v0.6.35+), with Direct Connections disabled. Do not build a custom SvelteKit app as the primary user interface. A tiny custom dev UI for retrieval internals is fine, but OWUI is the production path.
+Second, use Open WebUI as the frontend, pinned to the patched stable release used by this repo (`v0.9.1`), with Direct Connections disabled. Do not build a custom SvelteKit app as the primary user interface. A tiny custom dev UI for retrieval internals is fine, but OWUI is the production path.
 
 Third, **treat hosted quotas as runtime configuration, not architectural assumption**. Every provider limit lives in `infra/litellm/config.yaml`, every request is counted in Redis, every fallback chain is explicit. The plan survives any individual free-tier disappearance; it survives Lane C collapsing entirely (at reduced throughput). It does not survive a choice to hard-code a specific provider's quota into application logic.
 
-Start at Priority 0. Work the checklist down. Each priority builds on the previous, and the Phase 1 vertical slice is complete when Priority 3 is done. Everything after is a quality improvement on a working system.
+Start at Priority 0 (infra bootstrap), then Priority 0A (the Phase 0 meme searcher — the image-only product that proves every subsystem the video path will later reuse), then Priority 1 onward. The Phase 0 meme searcher is complete when all six P0-G1…P0-G6 gates close and the 50-query meme eval `nDCG@10` with reranker on beats the RRF-only baseline by at least +2 percentage points. The Phase 1 video vertical slice is complete when Priority 3 is done on top of a healthy Phase 0. Everything after is a quality improvement on a working system.

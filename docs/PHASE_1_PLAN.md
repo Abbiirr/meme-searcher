@@ -61,7 +61,7 @@ Phase 1 delivers the "one video end to end, re-run is idempotent, search returns
 - Evaluation harness (same metrics, new query set).
 
 ### Unified retrieval decision
-For Phase 1 the default search remains split by media: `/search?media=image` hits `memes_v1`, `/search?media=video` hits `video_segments_v1`. A unified `all_media` alias is deferred to Phase 3 once eval shows the fusion weighting works.
+For Phase 1 the default search remains split by media: `/search?media=image` hits `memes_v1` via `retrieve_images.py` (Phase 0 module, untouched), `/search?media=video` hits `video_segments_v1` via a new `retrieve_video.py` module. A thin `retrieve.py` dispatcher selects the backend on the `media` param. When `media` is omitted, the dispatcher fans out to both and returns a mixed ranked list at the API layer. A unified `all_media` Qdrant alias is deferred to Phase 3 once eval shows the fusion weighting works.
 
 ## 4. Ingest pipeline — the 12 steps
 

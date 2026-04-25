@@ -1,8 +1,10 @@
 # PHASE0_MEME_SEARCHER.md — Follow-up plan for a meme-first search engine
 
-Version: 2026-04-18
-Status: Implementation-ready follow-up to `../ARCHITECTURE.md`, `FINAL_PLAN.md`, and `TODO.md`
+Version: 2026-04-19 (aligned to Phase 0 contract)
+Status: Narrative companion to the **authoritative** Phase 0 contract in `PHASE_0_PLAN.md` + `PHASE_0_TODO.md`
 Audience: engineers, Codex, future maintainers
+
+> **Source-of-truth notice (2026-04-19):** where this narrative ever disagrees with `PHASE_0_PLAN.md` / `PHASE_0_TODO.md`, **the plan/todo win**. This file is kept for motivation and context; all hard numbers (corpus, query count, class split, acceptance thresholds) have been re-aligned to the plan. See `AGENTS_CONVERSATION.MD` Entries 6, 10, 11 for the reconciliation history.
 
 ---
 
@@ -43,8 +45,8 @@ If the system can retrieve memes well from meaning, OCR text, and visual appeara
 
 ### In scope
 
-- Personal meme/image corpus only
-- Image ingest from local folders and optional S3-compatible storage
+- `data/meme` corpus only (starting corpus; ~3,107 supported images)
+- Image ingest from the local `data/meme` folder (S3-compatible ingest is **deferred to Phase 2+** and is out of Phase 0 scope)
 - OCR on all images
 - Image embeddings on all images
 - Dense+sparse text embeddings on OCR text and optional captions
@@ -87,9 +89,9 @@ Phase 0 is complete when all of the following are true:
 
 ### Minimum acceptance targets
 
-- 10,000+ images indexed
-- 50-query eval set
-- nDCG@10 good enough that the system is clearly useful to you
+- Full `data/meme` corpus indexed (corpus-count baseline pinned in `docs/decision_log.md` after the first full run)
+- **40-query eval set, exactly 10 per class × 4 classes** (see §8 query types)
+- nDCG@10 meets the `P0-G4` thresholds in `PHASE_0_PLAN.md` §9
 - zero duplicate rows on re-ingest
 - all critical paths work with hosted models disabled except optional VLM verification
 
@@ -137,7 +139,7 @@ This means:
 These are the concrete choices for Phase 0.
 
 ### Storage
-- PostgreSQL 17
+- PostgreSQL 18 (bumped from 17; compatibility matrix in `AGENTS_CONVERSATION.MD` Entry 7)
 - MinIO
 - Qdrant
 
@@ -200,14 +202,13 @@ Only add captioning for low-text or failed-retrieval cases.
 ## 8. Phase 0 query pipeline
 
 ```text
-query text and optional query image
+query text (text-only in Phase 0; query-image path is deferred)
   -> intent parse
   -> BGE-M3 query encode (dense + sparse)
-  -> optional SigLIP query encode
   -> Qdrant prefetch:
        - text-dense
        - text-sparse
-       - visual (if needed)
+       - visual (query-text projected into SigLIP text tower; no user-supplied image in Phase 0)
   -> RRF fusion
   -> local reranker
   -> optional VLM verify top-5
@@ -215,18 +216,16 @@ query text and optional query image
   -> stream to OWUI
 ```
 
-### Query types to support in Phase 0
+### Query types to support in Phase 0 (four canonical classes)
 
-1. Exact text
-   - “find the meme with ‘im tired boss’”
-2. Semantic paraphrase
-   - “the meme where someone is completely done with life”
-3. Pure visual
-   - “the cat screaming at dinner table meme”
-4. Mixed
-   - “the Drake meme about code reviews”
-5. OCR-fuzzy
-   - text remembered badly or partially
+These are the only Phase 0 classes. `OCR-fuzzy` is **folded into `fuzzy_text`**; it is not a separate class.
+
+1. `exact_text` — exact visible text ("find the meme with 'im tired boss'")
+2. `fuzzy_text` — text remembered badly or partially (covers OCR-style fuzziness)
+3. `semantic_description` — meaning-only ("the meme where someone is completely done with life")
+4. `mixed_visual_description` — image + text intent ("the Drake meme about code reviews")
+
+Query-image input is out of Phase 0 scope.
 
 ---
 
@@ -279,13 +278,14 @@ You may optionally reuse the video `core.segments` idea with one “segment” p
 ## 10. Evaluation plan for Phase 0
 
 ### Eval set
-Start with 50 queries.
+**40 queries, exactly 10 per class × 4 classes** (see §8):
 
-Break them into:
-- 15 exact/OCR queries
-- 15 semantic text queries
-- 10 visual queries
-- 10 mixed queries
+- 10 `exact_text`
+- 10 `fuzzy_text`
+- 10 `semantic_description`
+- 10 `mixed_visual_description`
+
+Every query carries graded relevance labels (`0..3` for at least the top-10 candidates per query) and references real files in `data/meme`. Source of truth: `PHASE_0_PLAN.md` §10.1.
 
 ### Metrics
 - nDCG@10
@@ -341,16 +341,16 @@ Important: CCTV is a retrieval-quality and noise-tolerance problem first, not a 
 Bring up infrastructure only.
 
 ### Stage 1
-Ingest 1,000 memes.
+Ingest a 5-image smoke batch from `data/meme` and confirm `pg image_count == qdrant point_count`.
 
 ### Stage 2
 Wire search endpoint + OWUI tool.
 
 ### Stage 3
-Run 50-query eval set.
+Run the **40-query eval set (10 per class × 4 classes)** with graded qrels.
 
 ### Stage 4
-Scale to 10,000+ memes.
+Scale to the full `data/meme` corpus (~3,107 supported images); pin the corpus-count baseline as an ADR in `docs/decision_log.md`.
 
 ### Stage 5
 Only then add optional captioning.
@@ -377,14 +377,14 @@ Do not do these in Phase 0:
 
 You may move from memes to short clips only when all of these are true:
 
-- 10k+ memes ingested
-- 50-query eval set completed
+- Full `data/meme` corpus ingested and corpus-count baseline pinned in `docs/decision_log.md`
+- **40-query (10 per class × 4 classes)** eval set completed with graded qrels; `P0-G4` thresholds met
 - hybrid retrieval demonstrably useful
-- OCR path reliable enough
-- reranker demonstrably improves results
+- OCR path reliable enough and model fingerprint recorded in `ops.model_versions`
+- reranker demonstrably improves results (≥ +2 pp nDCG@10 over RRF-only)
 - OWUI tool flow works cleanly
 - idempotent re-ingest proven
-- indexes and backups documented
+- indexes and backups documented; delete + backup/restore drill executed
 
 ---
 

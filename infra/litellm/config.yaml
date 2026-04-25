@@ -1,0 +1,80 @@
+# LiteLLM gateway config for the meme-search project.
+# Authoritative routing map: docs/MODEL_GATEWAY.md §2.
+# Fingerprint recipe: docs/MODEL_GATEWAY.md §4 — every alias below gets a row
+# in ops.model_versions via vidsearch.ingest.fingerprints.seed_model_versions().
+
+model_list:
+  # ── Phase 0 semantic aliases (the names vidsearch code uses) ──
+  - model_name: meme_vlm_captioner
+    litellm_params:
+      model: openai/qwen3.6-vlm-local
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  - model_name: meme_ocr
+    litellm_params:
+      model: openai/paddle-ocr
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  - model_name: meme_ocr_fallback
+    litellm_params:
+      model: openai/glm-ocr
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  - model_name: meme_synthesis
+    litellm_params:
+      model: openai/fast
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  - model_name: meme_controller
+    litellm_params:
+      model: openai/thinking
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  # ── Legacy aliases (kept for backwards compat with older callers) ──
+  - model_name: search_llm
+    litellm_params:
+      model: openai/fast
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  - model_name: verify
+    litellm_params:
+      model: openai/fast
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  - model_name: judge
+    litellm_params:
+      model: openai/thinking
+      api_base: os.environ/LITELLM_URL
+      api_key: os.environ/LITELLM_MASTER_KEY
+
+  # ── Direct-to-provider escape hatches (offline / dev) ──
+  - model_name: local_qwen36_vlm
+    litellm_params:
+      model: os.environ/QWEN36_VLM_MODEL
+      api_base: os.environ/QWEN36_VLM_API_BASE
+      api_key: os.environ/QWEN36_VLM_API_KEY
+
+  - model_name: local_ollama_glm_ocr
+    litellm_params:
+      model: ollama/glm-ocr:latest
+      api_base: os.environ/OLLAMA_API_BASE
+
+  - model_name: local_ollama_nomic_embed
+    litellm_params:
+      model: ollama/nomic-embed-text-v2-moe:latest
+      api_base: os.environ/OLLAMA_API_BASE
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  enable_pre_call_checks: true
+
+litellm_settings:
+  drop_params: true

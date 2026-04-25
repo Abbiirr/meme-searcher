@@ -86,7 +86,7 @@
 
 ## P1.10 — Query + rerank for video (unlocks P1-G3)
 
-- [ ] Extend `vidsearch/query/retrieve.py` to target `video_segments` alias when `media=video`.
+- [ ] Introduce `vidsearch/query/retrieve_video.py` (mirror of Phase 0's `retrieve_images.py` shape) targeting the `video_segments` alias. Add a thin `vidsearch/query/retrieve.py` dispatcher that routes `media=image` → `retrieve_images` and `media=video` → `retrieve_video`. Phase 0's `retrieve_images.py` stays untouched; this is additive.
 - [ ] `group_by=video_id, group_size=3, limit=50`.
 - [ ] Optional multivector rescore via `text-colbert`.
 - [ ] Reuse Phase 0 reranker.

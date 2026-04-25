@@ -7,7 +7,7 @@
 - [ ] Create `docs/decision_log.md` with ADRs for: Postgres, Qdrant, Prefect, LiteLLM, OWUI, Qwen3-VL vs Qwen3.6, TurboQuant rejection.
 - [ ] Create `.env.example` with all required variables.
 - [ ] Write `docker-compose.yml` for: Postgres, Redis/Valkey, MinIO, Qdrant, LiteLLM, Prefect server, Prefect worker, FastAPI API, Open WebUI, optional vLLM, optional observability profile.
-- [ ] Pin Open WebUI to the latest patched stable version (at minimum `v0.6.35+`) and disable Direct Connections.
+- [x] Pin Open WebUI to the current patched stable version (`v0.9.1`) and keep Direct Connections disabled.
 - [ ] Apply Postgres schema.
 - [ ] Bootstrap Qdrant collection + alias.
 - [ ] Validate LiteLLM config with `litellm --check`.
@@ -19,11 +19,11 @@ _Full checklist in `PHASE_0_TODO.md`. Closing gates P0-G1…G6 live in `PHASE_0_
 - [ ] Bootstrap Qdrant collection `memes_v1` with named vectors `text-dense` (BGE-M3), `text-sparse` (BGE-M3 SPLADE), `visual` (SigLIP-2 So400m/16-384); alias `memes` points at `memes_v1`.
 - [ ] Implement `vidsearch/ids.py` content-addressed `image_id` (SHA-256 of canonical bytes) plus tests.
 - [ ] Implement single-image ingest: fetch → probe → PaddleOCR PP-OCRv5 → BGE-M3 dense+sparse on `ocr_text` → SigLIP-2 visual → Postgres upsert → Qdrant upsert; second run is a full cache hit.
-- [ ] Implement batch ingest of ≥ 10,000 memes with Prefect concurrency capped at the single-GPU budget.
+- [ ] Implement batch ingest of the `data/meme` corpus (~3,107 supported images) with Prefect concurrency capped at the single-GPU budget; pin the corpus-count baseline (seen / supported / ingested / duplicate / skipped / failed) as an ADR in `docs/decision_log.md` after the first full run.
 - [ ] Implement `/search` with Qdrant prefetch (dense + sparse + visual) + server-side RRF; image-only grouping off.
 - [ ] Add `jina-reranker-v2-base-multilingual` local rerank; record uplift vs RRF-only.
 - [ ] Register `/search` as an OWUI tool; render thumbnails + grounded citations.
-- [ ] Build 50-query meme eval set split 15 exact/OCR, 15 semantic, 10 visual, 10 mixed; record baseline `nDCG@10` with a `config_hash`.
+- [ ] Build **40-query meme eval set — exactly 10 per class × 4 classes: `exact_text`, `fuzzy_text`, `semantic_description`, `mixed_visual_description`** — with graded qrels (`0..3` for at least top-10 candidates per query) referencing real files in `data/meme`; record baseline `nDCG@10` with a `config_hash`. Source of truth: `PHASE_0_PLAN.md` §10.1.
 - [ ] **Gate P0-G3:** reranker uplift ≥ +2 pp over RRF-only baseline; if not, investigate before promoting.
 - [ ] Optional: caption backfill via Lane C (`Gemini 2.5 Flash-Lite`) behind a feature flag; captions feed BGE-M3 only — never required for first-pass retrieval.
 - [ ] Prove backup/restore drill for `core.images` + Qdrant snapshot; document in `docs/phase0_restore.md`.
@@ -87,7 +87,7 @@ _Full checklist in `PHASE_0_TODO.md`. Closing gates P0-G1…G6 live in `PHASE_0_
 ## Priority 6 — Scale and evaluation
 - [ ] Start bulk ingest on the real corpus.
 - [ ] Start caption backfill queue.
-- [ ] Grow eval set to 100 queries across five intent classes.
+- [ ] Grow eval set to 100+ queries across the four canonical intent classes (`exact_text`, `fuzzy_text`, `semantic_description`, `mixed_visual_description`).
 - [ ] Add reranker A/B comparisons.
 - [ ] Add CI regression checks on a frozen 50-video subset.
 

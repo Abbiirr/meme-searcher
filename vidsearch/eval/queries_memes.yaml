@@ -1,0 +1,316 @@
+# queries_memes.yaml — Phase 0 P0-G4 eval set
+#
+# Schema (per docs/PHASE_0_RETRIEVAL_PLAN.md §7 and docs/eval_protocol.md):
+#
+#   query_id         : stable UUID so eval.runs / eval.run_results / eval.qrels align
+#                      across re-runs (hardcoded so a fresh DB volume does not break history)
+#   text             : user-facing query string exactly as issued to /search
+#   intent           : one of exact_text | fuzzy_text | semantic_description | mixed_visual_description
+#                      (CHECK constraint on eval.queries.intent)
+#   target_image_id  : single image_id or list of image_ids that a correct system must return in the top-10.
+#                      NULL = not yet judged (see data-entry TODO below). Populating this is blocker F.
+#   qrels            : list of {image_id, grade} where grade ∈ 0..3 per eval_protocol.md.
+#                      Used by the runner when the eval.qrels table is empty.
+#   notes            : free-text hint for the human judge
+#
+# Class balance: EXACTLY 10/10/10/10 per retrieval_plan §7.1.
+#
+# Data-entry TODO (blocker F):
+#   After the first full `data/meme` ingest lands, walk these 40 queries against the retrieval stack,
+#   pick the real image_ids that match, and fill `target_image_id` + `qrels` below. The runner
+#   will treat an empty `qrels` list as "no graded data yet, report retrieval metrics as 0.0".
+#
+# Note: `target_image_id` is a CONVENIENCE field for the YAML; the canonical graded relevance lives
+# in the `qrels` list so multi-image positives are first-class.
+
+queries:
+  # ───────────────────────── exact_text (10) ─────────────────────────
+  # Queries that quote the meme's on-image text verbatim. BGE-M3 sparse
+  # leg must carry these; failures here are the loudest P0-G4 signal.
+  - query_id: "11111111-1111-4111-8111-000000000001"
+    text: "one does not simply walk into mordor"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Boromir / LOTR template. Exact OCR match expected."
+
+  - query_id: "11111111-1111-4111-8111-000000000002"
+    text: "i am once again asking for your financial support"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Bernie Sanders asking template."
+
+  - query_id: "11111111-1111-4111-8111-000000000003"
+    text: "change my mind"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Steven Crowder table template. Often appears as caption only."
+
+  - query_id: "11111111-1111-4111-8111-000000000004"
+    text: "this is fine"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Dog in burning room. Two-word exact match."
+
+  - query_id: "11111111-1111-4111-8111-000000000005"
+    text: "always has been"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Astronaut / wait-its-all template."
+
+  - query_id: "11111111-1111-4111-8111-000000000006"
+    text: "bitch please"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Yao Ming face. Exact OCR."
+
+  - query_id: "11111111-1111-4111-8111-000000000007"
+    text: "y u no"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Y U No Guy rage face."
+
+  - query_id: "11111111-1111-4111-8111-000000000008"
+    text: "is this a pigeon"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Anime butterfly confusion template."
+
+  - query_id: "11111111-1111-4111-8111-000000000009"
+    text: "i should buy a boat"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Cat reading newspaper template."
+
+  - query_id: "11111111-1111-4111-8111-00000000000a"
+    text: "none of my business"
+    intent: exact_text
+    target_image_id: null
+    qrels: []
+    notes: "Kermit sipping tea."
+
+  # ───────────────────────── fuzzy_text (10) ─────────────────────────
+  # Same spirit as exact_text but with typos, missing words, or partial recall.
+  # Stresses BGE-M3 sparse+dense fusion and trigram fallback.
+  - query_id: "22222222-2222-4222-8222-000000000001"
+    text: "one doesnt simply into mordor"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Missing words + contraction. Should match Boromir template."
+
+  - query_id: "22222222-2222-4222-8222-000000000002"
+    text: "bernie asking for money"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Paraphrase of 'i am once again asking...'"
+
+  - query_id: "22222222-2222-4222-8222-000000000003"
+    text: "distracted boyfriendmeme"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "No space + generic suffix. Common user typing pattern."
+
+  - query_id: "22222222-2222-4222-8222-000000000004"
+    text: "the one with the dog in fire saying everything is fine"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Paraphrases 'this is fine'."
+
+  - query_id: "22222222-2222-4222-8222-000000000005"
+    text: "surpised pikachu"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Typo in 'surprised'."
+
+  - query_id: "22222222-2222-4222-8222-000000000006"
+    text: "expandng brain"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Missing vowel; canonical 'expanding brain'."
+
+  - query_id: "22222222-2222-4222-8222-000000000007"
+    text: "drak posting"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Missing 'e'; canonical 'drakeposting'."
+
+  - query_id: "22222222-2222-4222-8222-000000000008"
+    text: "stonks"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Single-word short query; depends on caption/template."
+
+  - query_id: "22222222-2222-4222-8222-000000000009"
+    text: "womn yeling at cat"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Double typo. Should still land on woman-yelling-at-cat."
+
+  - query_id: "22222222-2222-4222-8222-00000000000a"
+    text: "harld with pain"
+    intent: fuzzy_text
+    target_image_id: null
+    qrels: []
+    notes: "Misspelled 'harold'; 'hide the pain harold' template."
+
+  # ──────────────────── semantic_description (10) ────────────────────
+  # No template name and no on-image text. Pure VLM caption + OCR path.
+  - query_id: "33333333-3333-4333-8333-000000000001"
+    text: "the meme where a dog sits in a burning room and says nothing is wrong"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Should match 'this is fine' via caption_literal."
+
+  - query_id: "33333333-3333-4333-8333-000000000002"
+    text: "a man points to his head implying he is smart"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Roll Safe template."
+
+  - query_id: "33333333-3333-4333-8333-000000000003"
+    text: "a skeleton waits endlessly at a bench"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Waiting Skeleton template."
+
+  - query_id: "33333333-3333-4333-8333-000000000004"
+    text: "a woman yells angrily at a cat sitting at a dinner table"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Woman Yelling At Cat."
+
+  - query_id: "33333333-3333-4333-8333-000000000005"
+    text: "someone refuses something in the first panel and agrees in the second"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Drake template (hotline bling)."
+
+  - query_id: "33333333-3333-4333-8333-000000000006"
+    text: "a young girl smirks in front of a house on fire"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Disaster Girl."
+
+  - query_id: "33333333-3333-4333-8333-000000000007"
+    text: "a person chooses between two red buttons and is sweating"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Two Buttons template."
+
+  - query_id: "33333333-3333-4333-8333-000000000008"
+    text: "a stock chart goes up and a man in a suit looks confident"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Stonks template."
+
+  - query_id: "33333333-3333-4333-8333-000000000009"
+    text: "an older man looks like he is in pain while smiling"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Hide the Pain Harold."
+
+  - query_id: "33333333-3333-4333-8333-00000000000a"
+    text: "a pikachu with its mouth wide open in shock"
+    intent: semantic_description
+    target_image_id: null
+    qrels: []
+    notes: "Surprised Pikachu."
+
+  # ────────────────── mixed_visual_description (10) ──────────────────
+  # References a template by nickname AND describes what's happening.
+  # Stresses SigLIP visual leg + BGE-M3 dense together.
+  - query_id: "44444444-4444-4444-8444-000000000001"
+    text: "drake meme about choosing between simple code and over-engineered code"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Template + semantic twist about programming."
+
+  - query_id: "44444444-4444-4444-8444-000000000002"
+    text: "spider-man pointing at spider-man meme about duplicated bug reports"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Pointing Spider-Men template."
+
+  - query_id: "44444444-4444-4444-8444-000000000003"
+    text: "expanding brain meme about tabs versus spaces escalating"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Expanding Brain template."
+
+  - query_id: "44444444-4444-4444-8444-000000000004"
+    text: "batman slapping robin about missing the deadline"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Batman Slapping Robin template."
+
+  - query_id: "44444444-4444-4444-8444-000000000005"
+    text: "gru's plan meme where the last panel surprises him"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Gru's Plan template."
+
+  - query_id: "44444444-4444-4444-8444-000000000006"
+    text: "distracted boyfriend meme about switching javascript frameworks"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Distracted Boyfriend template."
+
+  - query_id: "44444444-4444-4444-8444-000000000007"
+    text: "epic handshake meme between backend and frontend devs"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Epic Handshake template."
+
+  - query_id: "44444444-4444-4444-8444-000000000008"
+    text: "buff doge vs cheems comparing old and new engineers"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Buff Doge vs Cheems template."
+
+  - query_id: "44444444-4444-4444-8444-000000000009"
+    text: "mocking spongebob meme about the boss's weekend email"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "Mocking SpongeBob template."
+
+  - query_id: "44444444-4444-4444-8444-00000000000a"
+    text: "american chopper argument about whether to use postgres or mongodb"
+    intent: mixed_visual_description
+    target_image_id: null
+    qrels: []
+    notes: "American Chopper Argument template (5-panel)."

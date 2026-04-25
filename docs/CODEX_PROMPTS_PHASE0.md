@@ -1,7 +1,9 @@
 # CODEX_PROMPTS_PHASE0.md — Prompt pack to steer Codex toward the meme-first build
 
-Version: 2026-04-18
+Version: 2026-04-19 (aligned to Phase 0 contract)
 Purpose: give Codex precise, stable prompts that implement the project in the right order
+
+> **Source-of-truth notice (2026-04-19):** the authoritative Phase 0 contract is `PHASE_0_PLAN.md` + `PHASE_0_TODO.md`. This prompt pack is subordinate. Older wording referencing a 50-query eval, optional image-query search, or five query classes has been removed — if you see such wording in another doc, treat the plan/todo as the ground truth. See `AGENTS_CONVERSATION.MD` Entries 6, 10, 11.
 
 ---
 
@@ -13,23 +15,33 @@ Use one prompt at a time, in order.
 
 Rules for every Codex run:
 - do not redesign the architecture
-- follow `../ARCHITECTURE.md`, `FINAL_PLAN.md`, `TODO.md`, and `PHASE0_MEME_SEARCHER.md`
+- **source of truth:** `PHASE_0_PLAN.md` + `PHASE_0_TODO.md`. Supporting context: `../ARCHITECTURE.md`, `FINAL_PLAN.md`, `TODO.md`, `PHASE0_MEME_SEARCHER.md`. If any of the supporting docs disagree with the plan/todo, the plan/todo win.
 - prefer small reviewable commits
 - do not add speculative frameworks
 - do not add video-specific code unless the current prompt asks for it
+- do not add query-image input in Phase 0 (text-only query contract)
+- do not introduce a fifth query class; the Phase 0 classes are exactly `exact_text`, `fuzzy_text`, `semantic_description`, `mixed_visual_description`
 
 ---
 
 ## Prompt 0 — Read and align
 
 ```text
-Read these files carefully and treat them as the source of truth:
+Read these files carefully. Treat PHASE_0_PLAN.md + PHASE_0_TODO.md as the authoritative contract; the rest are supporting context.
+
+Authoritative contract:
+- PHASE_0_PLAN.md
+- PHASE_0_TODO.md
+
+Supporting context:
 - ../ARCHITECTURE.md
 - FINAL_PLAN.md
 - TODO.md
 - PHASE0_MEME_SEARCHER.md
 
-Your job is not to redesign the project. Your job is to implement Phase 0 only: an image-only meme search engine.
+If supporting context disagrees with PHASE_0_PLAN.md / PHASE_0_TODO.md, follow the plan/todo.
+
+Your job is not to redesign the project. Your job is to implement Phase 0 only: an image-only meme search engine over data/meme with a text-only query contract.
 
 Before changing code, produce:
 1. a concise implementation plan for Phase 0,
@@ -160,7 +172,7 @@ Implement the Phase 0 search backend.
 
 Requirements:
 - text query path using BGE-M3 dense + sparse retrieval in Qdrant
-- optional image query path using SigLIP visual retrieval
+- visual prefetch uses the SigLIP text tower on the query text (no user-supplied image in Phase 0)
 - server-side fusion in Qdrant where appropriate
 - payload filtering support
 - top-k candidate return with raw scores
@@ -244,8 +256,8 @@ Deliverables:
 Implement the Phase 0 evaluation harness.
 
 Requirements:
-- YAML or JSON file for 50 meme queries
-- support graded relevance labels
+- YAML file for **exactly 40 meme queries, 10 per class × 4 classes** (`exact_text`, `fuzzy_text`, `semantic_description`, `mixed_visual_description`); see PHASE_0_PLAN.md §10.1
+- graded relevance labels (0..3) for at least the top-10 candidates per query, referencing real files in data/meme
 - compute nDCG@10, Recall@10, Recall@50, MRR
 - compare retrieval-only vs reranked results
 - persist eval runs to Postgres

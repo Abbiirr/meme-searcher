@@ -1,0 +1,48 @@
+model_list:
+  - model_name: vision
+    litellm_params:
+      model: openai/qwen3.6-vlm-local
+      api_base: http://host.docker.internal:8080/v1
+      api_key: sk-local-qwen
+
+  - model_name: qwen3.6-vlm-wrapper
+    litellm_params:
+      model: openai/qwen3.6-vlm-local
+      api_base: http://host.docker.internal:8080/v1
+      api_key: sk-local-qwen
+
+  - model_name: qwen3.6-vlm-local
+    litellm_params:
+      model: openai/qwen3.6-vlm-local
+      api_base: http://host.docker.internal:8080/v1
+      api_key: sk-local-qwen
+
+  - model_name: glm-ocr-wrapper
+    litellm_params:
+      model: openai/qwen3.6-vlm-local
+      api_base: http://host.docker.internal:8080/v1
+      api_key: sk-local-qwen
+
+  - model_name: glm-ocr
+    litellm_params:
+      model: openai/qwen3.6-vlm-local
+      api_base: http://host.docker.internal:8080/v1
+      api_key: sk-local-qwen
+
+  - model_name: fast
+    litellm_params:
+      model: ollama/sam860/deepseek-r1-0528-qwen3:8b
+      api_base: http://host.docker.internal:11434
+
+  - model_name: thinking
+    litellm_params:
+      model: ollama/sam860/deepseek-r1-0528-qwen3:8b
+      api_base: http://host.docker.internal:11434
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  enable_pre_call_checks: true
+
+litellm_settings:
+  drop_params: true
