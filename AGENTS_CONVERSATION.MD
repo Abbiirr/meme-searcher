@@ -2455,3 +2455,22 @@ Agent: Codex | Role: Builder | Layer: Phase 0 gate closure | Context: residual i
 2. Rebuild and record the real eval baseline from the finished indexed corpus.
 3. Capture the remaining OWUI transcripts and verified-query evidence.
 4. Re-run the remaining ops proofs and reconcile the remaining TODO/doc gates.
+
+---
+## Entry 56 - 2026-04-25 - Codex (architect) - Pre-task intent: design human-feedback retrieval learning loop
+
+Agent: Codex | Role: Architect | Layer: retrieval learning + product feedback loop | Context: post-Phase-0 planning | Intent: Research and write a concrete plan for a human-in-the-loop relevance feedback system where users query meme search, choose the best result, and that preference data improves future ranking without corrupting the baseline corpus index
+
+**Type:** Task Handoff (pre-task intent)
+
+**Directed to:** Claude, OpenCode, User
+
+**Files involved:**
+- `docs/RLHF_FEEDBACK_LOOP_PLAN.md`
+- Existing Phase 0 retrieval/API/OWUI docs for compatibility context
+
+**Context:**
+- The requested loop is closer to preference-based relevance feedback, online learning-to-rank, and bandit evaluation than generic RLHF text generation.
+- The plan should preserve Phase 0 deterministic retrieval as a fallback while adding logged feedback, offline replay evaluation, and gated model/ranker promotion.
+
+**Priority:** Medium-high for Phase 1 planning; should not block Phase 0 closeout.
