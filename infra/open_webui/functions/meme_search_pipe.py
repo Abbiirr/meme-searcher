@@ -86,8 +86,22 @@ def _normalize_public_url(url: str, image_id: str | None = None) -> str:
     return url
 
 
-def _search(query: str, limit: int) -> dict[str, Any]:
-    payload = json.dumps({"query": query, "limit": limit}).encode("utf-8")
+def _user_ref(__user__: dict[str, Any] | None) -> str | None:
+    if not __user__:
+        return None
+    for key in ("id", "email", "name", "username"):
+        value = __user__.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _search(query: str, limit: int, __user__: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload_dict: dict[str, Any] = {"query": query, "limit": limit}
+    user_ref = _user_ref(__user__)
+    if user_ref:
+        payload_dict["owui_user_id"] = user_ref
+    payload = json.dumps(payload_dict).encode("utf-8")
     req = request.Request(
         f"{_search_api_base()}/search",
         data=payload,
@@ -110,6 +124,9 @@ def _format_hit(hit: dict[str, Any]) -> str:
     rank = hit.get("rank", "?")
     retrieval_score = hit.get("retrieval_score")
     rerank_score = hit.get("rerank_score")
+    select_url = str(hit.get("feedback_select_url", "")).strip()
+    reject_url = str(hit.get("feedback_reject_url", "")).strip()
+    undo_url = str(hit.get("feedback_undo_url", "")).strip()
     ocr_excerpt = str(hit.get("ocr_excerpt", "")).strip()
 
     metrics = [f"Rank `{rank}`"]
@@ -133,6 +150,16 @@ def _format_hit(hit: dict[str, Any]) -> str:
     if ocr_excerpt:
         lines.append("")
         lines.append(f"OCR: `{ocr_excerpt}`")
+    feedback_links = []
+    if select_url:
+        feedback_links.append(f"[Select]({select_url})")
+    if reject_url:
+        feedback_links.append(f"[Reject]({reject_url})")
+    if undo_url:
+        feedback_links.append(f"[Undo]({undo_url})")
+    if feedback_links:
+        lines.append("")
+        lines.append("Feedback: " + " | ".join(feedback_links))
     return "\n".join(lines).strip()
 
 
@@ -150,6 +177,10 @@ def format_search_markdown(result: dict[str, Any], query: str) -> str:
     for hit in hits:
         blocks.append(_format_hit(hit))
 
+    none_correct_url = str(result.get("feedback_none_correct_url", "")).strip()
+    if none_correct_url:
+        blocks.append(f"[None of these are correct]({none_correct_url})")
+
     return "\n\n".join(block for block in blocks if block).strip()
 
 
@@ -161,7 +192,7 @@ class Pipe:
 
         limit = _default_limit()
         try:
-            result = _search(query, limit)
+            result = _search(query, limit, __user__)
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore").strip()
             return (

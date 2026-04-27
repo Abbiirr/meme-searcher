@@ -340,6 +340,8 @@ def caption_image(path: str | Path) -> Captions:
 
 def build_retrieval_text(captions: Captions, ocr_text: str | None = None) -> str:
     """Assemble the BGE-M3 retrieval blob per PHASE_0_RETRIEVAL_PLAN.md section 2.3."""
+    from vidsearch.ingest.ocr_normalize import repair_mojibake_text
+
     lines: list[str] = []
     if captions.literal:
         lines.append(f"[CAP_LIT] {captions.literal}")
@@ -349,7 +351,7 @@ def build_retrieval_text(captions: Captions, ocr_text: str | None = None) -> str
         lines.append(f"[TEMPLATE] {captions.template}")
     if captions.tags:
         lines.append(f"[TAGS] {', '.join(captions.tags)}")
-    ocr_clean = (ocr_text or "").strip()
+    ocr_clean = repair_mojibake_text(ocr_text or "").strip()
     if ocr_clean:
         lines.append(f"[OCR] {ocr_clean}")
     return "\n".join(lines)

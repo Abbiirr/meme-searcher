@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -22,6 +23,7 @@ INTENTS = (
 )
 PER_INTENT = 10
 OUTPUT_PATH = Path(__file__).resolve().with_name("queries_memes.yaml")
+_QUERY_UUID_NS = uuid.uuid5(uuid.NAMESPACE_URL, "vidsearch/eval/meme-queries")
 
 
 @dataclass
@@ -122,8 +124,7 @@ def _visual_anchor(candidate: Candidate) -> str:
 
 
 def _query_id(intent: str, image_id: str) -> str:
-    digest = hashlib.sha1(f"{intent}:{image_id}".encode("utf-8")).hexdigest()[:12]
-    return f"{intent[:4]}-{digest}"
+    return str(uuid.uuid5(_QUERY_UUID_NS, f"{intent}:{image_id}"))
 
 
 def _load_candidates() -> list[Candidate]:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from vidsearch.eval.rebuild_queries import (
     Candidate,
     _build_exact,
@@ -27,6 +29,7 @@ def _candidate(**overrides) -> Candidate:
 def test_build_exact_wraps_phrase_in_quotes():
     query = _build_exact(_candidate())
     assert query is not None
+    uuid.UUID(query["query_id"])
     assert query["intent"] == "exact_text"
     assert query["text"] == '"the secret ingredient is crime"'
 

@@ -45,6 +45,25 @@ def test_retrieve_images_uses_configured_rerank_cap(monkeypatch):
     }
 
 
+def test_retrieve_images_uses_requested_limit_as_candidate_floor(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(retrieve_mod, "ENABLE_VISUAL_QUERY", False)
+    monkeypatch.setattr(retrieve_mod, "classify_intent", lambda query: "semantic_description")
+    monkeypatch.setattr(retrieve_mod, "encode_text", lambda query: ([0.1], {1: 0.4}))
+    monkeypatch.setattr(retrieve_mod, "_RERANK_TOP_K_BY_INTENT", {"semantic_description": 10})
+
+    def fake_search_hybrid(*, text_dense, text_sparse, visual, limit, intent):
+        captured["limit"] = limit
+        return []
+
+    monkeypatch.setattr(retrieve_mod.qdrant_store, "search_hybrid", fake_search_hybrid)
+
+    retrieve_mod.retrieve_images("orange food items on a tray", limit=20)
+
+    assert captured["limit"] == 20
+
+
 def test_warm_retrieval_runtime_skips_visual_warmup_when_disabled(monkeypatch):
     calls: list[str] = []
 

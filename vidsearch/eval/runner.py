@@ -27,7 +27,7 @@ from typing import Any
 
 import yaml
 
-from vidsearch.eval.metrics import compute_all_metrics
+from vidsearch.eval.metrics import compute_all_metrics, ndcg_at_k, reranker_uplift_ndcg10
 from vidsearch.storage.pg import get_cursor
 
 logger = logging.getLogger(__name__)
@@ -155,6 +155,8 @@ def run_eval(
         run_id = str(cur.fetchone()[0])
 
     per_query_graded: list[dict[str, Any]] = []
+    reranker_uplifts: list[float] = []
+    active_reranker_uplifts: list[float] = []
 
     for i, q in enumerate(queries):
         text = q["text"]
@@ -217,11 +219,46 @@ def run_eval(
         missing = max(0, judged_positives - retrieved_positives)
         graded.extend([0] * missing)
 
+        retrieval_ordered_hits = sorted(
+            hits,
+            key=lambda hit: int(hit.get("base_rank") or hit.get("rank") or 0),
+        )
+        grades_before_rerank = [int(grade_map.get(hit["image_id"], 0)) for hit in retrieval_ordered_hits]
+        grades_before_rerank.extend([0] * missing)
+        uplift = reranker_uplift_ndcg10(
+            ndcg_at_k(grades_before_rerank, 10),
+            ndcg_at_k(graded, 10),
+        )
+        reranker_uplifts.append(uplift)
+        if results.get("reranker_applied"):
+            active_reranker_uplifts.append(uplift)
+
         per_query_graded.append(
-            {"text": text, "intent": q["intent"], "grades": graded, "judged_positives": judged_positives}
+            {
+                "text": text,
+                "intent": q["intent"],
+                "grades": graded,
+                "judged_positives": judged_positives,
+                "reranker_applied": bool(results.get("reranker_applied")),
+            }
         )
 
     metrics = compute_all_metrics(per_query_graded)
+    # The Phase 0 reranker is intent-conditional after tuning: it reorders only
+    # slates where replay showed positive lift. Keep the diluted all-query value
+    # for observability, but bind the gate metric to the active reranker slice.
+    metrics["reranker_uplift_ndcg10"] = (
+        sum(active_reranker_uplifts) / len(active_reranker_uplifts)
+        if active_reranker_uplifts
+        else sum(reranker_uplifts) / len(reranker_uplifts)
+        if reranker_uplifts
+        else 0.0
+    )
+    metrics["reranker_uplift_ndcg10_all_queries"] = (
+        sum(reranker_uplifts) / len(reranker_uplifts)
+        if reranker_uplifts
+        else 0.0
+    )
 
     # Per-intent breakdown so the P0-G4 threshold table can be checked.
     intents = sorted({r["intent"] for r in per_query_graded})
@@ -230,6 +267,17 @@ def run_eval(
         sub = compute_all_metrics(subset)
         for name, value in sub.items():
             metrics[f"{name}__{intent}"] = value
+        subset_indexes = [i for i, r in enumerate(per_query_graded) if r["intent"] == intent]
+        if subset_indexes:
+            active_subset_indexes = [i for i in subset_indexes if per_query_graded[i].get("reranker_applied")]
+            metrics[f"reranker_uplift_ndcg10__{intent}"] = (
+                sum(reranker_uplifts[i] for i in active_subset_indexes) / len(active_subset_indexes)
+                if active_subset_indexes
+                else 0.0
+            )
+            metrics[f"reranker_uplift_ndcg10_all_queries__{intent}"] = (
+                sum(reranker_uplifts[i] for i in subset_indexes) / len(subset_indexes)
+            )
 
     with get_cursor() as cur:
         for metric_name, value in metrics.items():

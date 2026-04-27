@@ -31,6 +31,9 @@ def test_search_response_roundtrip():
 
 
 def test_search_request_validation():
+    req = SearchRequest(query="test", limit=100)
+    assert req.limit == 100
+
     try:
         SearchRequest(query="")
         assert False, "should raise"
@@ -44,7 +47,7 @@ def test_search_request_validation():
         pass
 
     try:
-        SearchRequest(query="test", limit=21)
+        SearchRequest(query="test", limit=101)
         assert False, "should raise"
     except Exception:
         pass

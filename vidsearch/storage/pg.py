@@ -132,10 +132,27 @@ def get_ingest_step(cur, image_id: str, step: str) -> str | None:
 
 
 def delete_image(cur, image_id: str) -> bool:
+    cur.execute("SELECT to_regclass('feedback.preference_pairs')")
+    if cur.fetchone()[0]:
+        cur.execute(
+            """DELETE FROM feedback.preference_pairs
+               WHERE winner_image_id = %s OR loser_image_id = %s""",
+            (image_id, image_id),
+        )
+
+    cur.execute("SELECT to_regclass('feedback.judgments')")
+    if cur.fetchone()[0]:
+        cur.execute("DELETE FROM feedback.judgments WHERE image_id = %s", (image_id,))
+
+    cur.execute("SELECT to_regclass('feedback.search_impressions')")
+    if cur.fetchone()[0]:
+        cur.execute("DELETE FROM feedback.search_impressions WHERE image_id = %s", (image_id,))
+
     cur.execute("DELETE FROM core.image_items WHERE image_id = %s", (image_id,))
     cur.execute("DELETE FROM core.images WHERE image_id = %s", (image_id,))
+    deleted = cur.rowcount > 0
     cur.execute("DELETE FROM ops.ingest_steps WHERE image_id = %s", (image_id,))
-    return cur.rowcount > 0
+    return deleted
 
 
 def get_image_by_id(cur, image_id: str) -> dict | None:

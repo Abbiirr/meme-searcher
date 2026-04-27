@@ -30,6 +30,7 @@ from vidsearch.config import (
     RERANK_TOP_K_MIXED,
     RERANK_TOP_K_SEMANTIC,
 )
+from vidsearch.ingest.ocr_normalize import repair_mojibake_text
 from vidsearch.query.encoders import _get_bge, _get_siglip, encode_text, encode_text_visual
 from vidsearch.query.intent import classify_intent
 from vidsearch.query.rerank_images import _get_reranker, _get_tokenizer, rerank
@@ -74,7 +75,7 @@ def _fetch_item_rows(cur, image_ids: list[str]) -> dict[str, dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
     for r in cur.fetchall():
         rows[r[0]] = {
-            "ocr_full_text": r[1] or "",
+            "ocr_full_text": repair_mojibake_text(r[1] or ""),
             "caption_literal": r[2] or "",
             "caption_figurative": r[3] or "",
             "template_name": r[4] or "",
@@ -126,7 +127,10 @@ def warm_retrieval_runtime() -> None:
 
 def retrieve_images(query: str, limit: int = 10) -> dict[str, Any]:
     intent = classify_intent(query)
-    rerank_cap = _RERANK_TOP_K_BY_INTENT.get(intent, _DEFAULT_RERANK_TOP_K)
+    # The caller's requested limit is a lower bound on candidate pickup.
+    # Otherwise a top_k=20 replay can silently search only the configured
+    # top-10/12 intent cap and misclassify targets as missing.
+    rerank_cap = max(limit, _RERANK_TOP_K_BY_INTENT.get(intent, _DEFAULT_RERANK_TOP_K))
 
     text_dense, text_sparse = encode_text(query)
     visual = encode_text_visual(query) if ENABLE_VISUAL_QUERY else []
@@ -149,11 +153,12 @@ def retrieve_images(query: str, limit: int = 10) -> dict[str, Any]:
 
     # Qdrant points carry our canonical image_id in payload; fall back to .id.
     hits_by_id: dict[str, dict[str, Any]] = {}
-    for pt in candidates:
+    for base_rank, pt in enumerate(candidates, start=1):
         payload = pt.payload or {}
         iid = payload.get("image_id") or pt.id
         hits_by_id[iid] = {
             "image_id": iid,
+            "base_rank": base_rank,
             "retrieval_score": float(pt.score or 0.0),
             "payload": payload,
         }
@@ -175,16 +180,28 @@ def retrieve_images(query: str, limit: int = 10) -> dict[str, Any]:
         rerank_ids.append(iid)
 
     reranked = rerank(query, rerank_docs, top_k=min(limit, len(rerank_docs)))
+    rerank_score_by_id = {rerank_ids[orig_idx]: float(score) for orig_idx, score in reranked}
+
+    # P0-G4 tuning: the cross-encoder improves noisy fuzzy-text queries but
+    # empirically degrades exact/mixed queries where OCR/RRF already places the
+    # target first. Keep rerank scores for observability, but only let the
+    # reranker order fuzzy-text slates.
+    if intent == "fuzzy_text":
+        ordered_ids = [rerank_ids[orig_idx] for orig_idx, _score in reranked]
+        reranker_applied = True
+    else:
+        ordered_ids = rerank_ids[:limit]
+        reranker_applied = False
 
     hits: list[dict[str, Any]] = []
-    for rank_idx, (orig_idx, score) in enumerate(reranked):
-        iid = rerank_ids[orig_idx]
+    for rank_idx, iid in enumerate(ordered_ids):
         base = hits_by_id[iid]
         row = item_rows.get(iid, {})
         ocr = (row.get("ocr_full_text") or "")
         hits.append(
             {
                 "rank": rank_idx + 1,
+                "base_rank": base["base_rank"],
                 "image_id": iid,
                 "source_uri": row.get("source_uri") or base["payload"].get("source_uri", ""),
                 "thumbnail_uri": row.get("thumbnail_uri") or base["payload"].get("thumbnail_uri", ""),
@@ -194,7 +211,7 @@ def retrieve_images(query: str, limit: int = 10) -> dict[str, Any]:
                 "tags": row.get("tags", []),
                 "ocr_excerpt": ocr[:200] if ocr else "",
                 "retrieval_score": base["retrieval_score"],
-                "rerank_score": float(score),
+                "rerank_score": rerank_score_by_id.get(iid),
             }
         )
 
@@ -202,6 +219,7 @@ def retrieve_images(query: str, limit: int = 10) -> dict[str, Any]:
         "query": query,
         "intent": intent,
         "rerank_cap": rerank_cap,
+        "reranker_applied": reranker_applied,
         "total_returned": len(hits),
         "hits": hits,
     }

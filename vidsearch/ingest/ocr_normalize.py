@@ -15,9 +15,30 @@ _NO_TEXT_MARKERS = {
     "no visible text",
 }
 
+_MOJIBAKE_MARKERS = ("à¦", "à§", "à¥")
+_BANGLA_RE = re.compile(r"[\u0980-\u09ff]")
+
+
+def _bangla_chars(text: str) -> int:
+    return len(_BANGLA_RE.findall(text or ""))
+
+
+def repair_mojibake_text(text: str) -> str:
+    """Repair common UTF-8-as-Latin-1 mojibake seen in Bangla OCR output."""
+    value = str(text or "")
+    if not value or not any(marker in value for marker in _MOJIBAKE_MARKERS):
+        return value
+    try:
+        repaired = value.encode("latin1").decode("utf-8")
+    except UnicodeError:
+        return value
+    if _bangla_chars(repaired) > _bangla_chars(value):
+        return repaired
+    return value
+
 
 def _normalized_token(text: str) -> str:
-    cleaned = unicodedata.normalize("NFKC", str(text or ""))
+    cleaned = unicodedata.normalize("NFKC", repair_mojibake_text(str(text or "")))
     cleaned = cleaned.strip().lower()
     cleaned = re.sub(r"\s+", " ", cleaned)
     cleaned = re.sub(r"[.!?]+$", "", cleaned)
@@ -33,7 +54,7 @@ def normalize_ocr_text(raw_boxes: list[dict], confidence_threshold: float = 0.6)
     embed_tokens = []
 
     for box in raw_boxes:
-        text = box.get("text", "").strip()
+        text = repair_mojibake_text(box.get("text", "")).strip()
         if not text or is_placeholder_ocr_text(text):
             continue
         conf = box.get("conf", 0.0)

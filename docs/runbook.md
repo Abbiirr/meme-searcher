@@ -12,7 +12,7 @@ docker compose ps  # wait for all services to report healthy
 ```
 
 Expected compose services: `api`, `postgres`, `qdrant`, `minio`, `open-webui`.
-Host-side dependency: LiteLLM gateway on `127.0.0.1:4000` (not a compose service in this repo).
+Host-side dependency: LiteLLM gateway on `127.0.0.1:4100` (not a compose service in this repo).
 
 ## 2. Required environment
 
@@ -20,8 +20,8 @@ The following variables must be set in `.env` before the ingest pipeline will ro
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LITELLM_URL` | `http://127.0.0.1:4000` | Host-side LiteLLM gateway URL for local commands and host-run Python |
-| `LITELLM_INTERNAL_URL` | `http://host.docker.internal:4000` | Gateway URL injected into Linux containers (`api`, `open-webui`) |
+| `LITELLM_URL` | `http://127.0.0.1:4100` | Host-side LiteLLM gateway URL for local commands and host-run Python |
+| `LITELLM_INTERNAL_URL` | `http://host.docker.internal:4100` | Gateway URL injected into Linux containers (`api`, `open-webui`) |
 | `LITELLM_MASTER_KEY` | `sk-my-secret-gateway-key` | Bearer token for `/v1/*` endpoints |
 | `OPEN_WEBUI_ADMIN_EMAIL` | `admin@localhost` | Bootstrap admin used only when the OWUI DB has no users yet |
 | `OPEN_WEBUI_ADMIN_PASSWORD` | `admin` | Bootstrap admin password for the empty-DB case |
@@ -38,7 +38,7 @@ If `LITELLM_MASTER_KEY` is unset, both `compute_gateway_fingerprint()` and every
 
 ## 3. Local endpoint defaults
 
-- LiteLLM gateway: `http://127.0.0.1:4000`
+- LiteLLM gateway: `http://127.0.0.1:4100`
 - FastAPI: `http://127.0.0.1:8000`
 - Open WebUI: `http://127.0.0.1:${OPEN_WEBUI_HOST_PORT}`
 - Qdrant: `http://127.0.0.1:6333`
@@ -67,7 +67,7 @@ Expect a positive integer (46 aliases at time of writing). If this returns 0, a 
 
 ```bash
 curl -sS -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  http://127.0.0.1:4000/v1/models | jq '.data | length'
+  http://127.0.0.1:4100/v1/models | jq '.data | length'
 ```
 
 ## 5. Bootstrap Qdrant
@@ -136,7 +136,7 @@ echo "pg=$pg_count qdrant=$qd_count"
 2. `decode` — Pillow decode; records `width`, `height`, `fmt`.
 3. `thumbnail` — 512px webp, pushed to MinIO at `thumbnails/<image_id>.webp`.
 4. `ocr` — gateway call to `meme_ocr` (with auto-retry to `meme_ocr_fallback` on HTTP error); `VIDSEARCH_OCR_BACKEND=local` falls back to direct PaddleOCR.
-5. `caption` — 4-prompt gateway call to `meme_vlm_captioner` emitting literal, figurative, template, tags per `PHASE_0_RETRIEVAL_PLAN.md` §2.3.
+5. `caption` — 4-prompt gateway call to `qwen3.6-vlm-wrapper` emitting literal, figurative, template, tags per `PHASE_0_RETRIEVAL_PLAN.md` §2.3.
 6. `embed_text` — BGE-M3 dense + sparse over the `retrieval_text` blob (falls back to raw OCR if blob is empty).
 7. `embed_visual` — SigLIP-2 forward pass (direct-local from `$MODEL_ROOT/embeddings/siglip2-so400m-patch16-384`).
 8. `upsert_pg` — `core.images` + `core.image_items` write (13 columns including the 5 caption fields).
@@ -165,6 +165,173 @@ Expected result:
 - OWUI returns markdown with inline image thumbnails from `http://127.0.0.1:8000/thumbnail/...`
 - the benchmark query above returns `data\meme\10933027.png` at rank 1 in the current runtime
 - if you use `vision` or another normal chat model instead of `Meme Search`, you will get plain LLM text rather than local meme retrieval
+
+## 9.2 Test feedback capture
+
+Feedback is rendered only by the `Meme Search` OWUI pipe.
+
+1. In Open WebUI, select `Meme Search`.
+2. Search for a known meme, for example `"iterator iterator for loop"`.
+3. Click `Select` under the best result.
+4. A FastAPI confirmation page opens at `/feedback/confirm/<signed_token>` and auto-submits `POST /feedback/judgment`.
+5. The confirmation page should show `Feedback recorded`.
+
+Verify the write:
+
+```bash
+docker compose exec postgres psql -U vidsearch -d vidsearch \
+  -c "SELECT action, image_id, created_at FROM feedback.judgments ORDER BY created_at DESC LIMIT 5;"
+```
+
+Duplicate clicks on the same `Select` link are idempotent. `Undo` tombstones the active judgment and derived preference pairs.
+
+Current local status (2026-04-25): the reusable Codex-agent bootstrap loop has trained and promoted `feedback_pairwise_v1_d1325bb7c307`, served from `artifacts/feedback_rankers/latest.json`. The API is configured with `VIDSEARCH_FEEDBACK_RANKER_ENABLED=true` and returns non-null `learned_score` values. To return to Phase 0-only ordering, use the rollback command below.
+
+Useful feedback maintenance commands:
+
+```bash
+python -m vidsearch.feedback.backfill_pairs
+python -m vidsearch.feedback.snapshots --output artifacts/feedback_snapshots/latest.jsonl
+python -m vidsearch.feedback.exporters --snapshot artifacts/feedback_snapshots/latest.jsonl --output-dir artifacts/feedback_exports/latest
+python -m vidsearch.feedback.train_ranker --output artifacts/feedback_rankers/latest.json --approve-promotion --p0-g4-passing
+python -m vidsearch.feedback.evaluate_ranker --artifact artifacts/feedback_rankers/latest.json --output artifacts/feedback_eval/latest.json --changed-report-prefix artifacts/feedback_eval/latest_changed
+```
+
+## 9.3 Reusable LLM-agent feedback loop
+
+Use this when an agent such as Codex, Claude Code, or OpenCode is standing in for the human selector. The loop builds an auditable review pack from an eval run, lets the agent provide decisions, applies those decisions through the same signed feedback-token path used by OWUI, then trains and evaluates the ranker with the normal hard gates.
+
+Important: this eval-run slate loop only tests learning-to-rank for candidates already found by the retriever. The preferred RLHF benchmark loop now starts from `data/meme_rlhf`: inspect each target image, generate natural prompts, run search against the full corpus, select the target if it appears, and record `target_not_found` if it does not.
+
+Target-image benchmark loop:
+
+```text
+data/meme_rlhf image
+-> AI agent writes natural prompts
+-> system searches full data/meme corpus with no target hint
+-> evaluator checks whether target image appears in top K
+-> found: select target and train ranking pairs
+-> missing: record retrieval-failure correction case
+```
+
+Prompt-generation instructions live in `docs/AGENT_PROMPT_LABELING_INSTRUCTIONS.md`.
+
+Build the target pack from `data/meme_rlhf`:
+
+```powershell
+python -m vidsearch.feedback.target_benchmark build-target-pack `
+  --folder data/meme_rlhf `
+  --output artifacts/feedback_targets/target_pack.jsonl
+
+python -m vidsearch.feedback.target_benchmark write-target-prompt `
+  --pack artifacts/feedback_targets/target_pack.jsonl `
+  --output artifacts/feedback_targets/agent_prompt.md `
+  --labels-output artifacts/feedback_targets/target_prompts.jsonl
+```
+
+Automated AI-agent prompt generation uses the LiteLLM gateway. This keeps prompt labels under the same model-routing and provenance surface as Phase 0 captioning.
+
+```powershell
+python -m vidsearch.feedback.target_benchmark generate-prompts-gateway `
+  --pack artifacts/feedback_targets/target_pack.jsonl `
+  --output artifacts/feedback_targets/target_prompts.jsonl `
+  --model qwen3.6-vlm-wrapper `
+  --gateway-url $env:LITELLM_URL `
+  --resume
+```
+
+If the image-VLM path is unavailable or too slow, keep the run on LiteLLM and generate prompts from the target pack's reviewer metadata instead of falling back to direct Ollama:
+
+```powershell
+python -m vidsearch.feedback.target_benchmark generate-prompts-metadata-gateway `
+  --pack artifacts/feedback_targets/target_pack.jsonl `
+  --output artifacts/feedback_targets/target_prompts.jsonl `
+  --model fast `
+  --gateway-url $env:LITELLM_URL `
+  --prompts-per-image 1 `
+  --batch-size 8 `
+  --resume
+```
+
+Do not use direct Ollama unless the user explicitly accepts fallback provenance for that run. If `localhost:4100` is down, restore the gateway first.
+
+Then run those prompts against the full corpus:
+
+```powershell
+.\scripts\rlhf_target_benchmark.ps1 `
+  -Pack artifacts/feedback_targets/target_pack.jsonl `
+  -Prompts artifacts/feedback_targets/target_prompts.jsonl `
+  -ClientSessionPrefix rlhf-target `
+  -Operator codex-agent `
+  -ReplacePrefix `
+  -Train
+```
+
+This writes:
+
+- `artifacts/feedback_targets/results.jsonl`, with every target/prompt search result.
+- `artifacts/feedback_targets/target_not_found.jsonl`, with retrieval failures that the ranker cannot fix.
+- Normal feedback `judgments` and `preference_pairs` for found targets, created through the same signed-token path as Open WebUI.
+
+Use `-Limit N` on the wrapper for a small proof run:
+
+```powershell
+.\scripts\rlhf_target_benchmark.ps1 -BuildPack -WriteAgentPrompt -GeneratePrompts -Limit 5 -ReplacePrefix -Train
+```
+
+One-command controlled bootstrap:
+
+```powershell
+.\scripts\rlhf_agent_loop.ps1 `
+  -EvalRunId 21b3ade7-e9b4-4803-9a52-cb17370c8a28 `
+  -ClientSessionPrefix rlhf-agent `
+  -Operator codex-agent `
+  -ReplacePrefix
+```
+
+Manual agent-in-the-loop mode:
+
+```bash
+python -m vidsearch.feedback.agent_operator build-pack \
+  --eval-run-id 21b3ade7-e9b4-4803-9a52-cb17370c8a28 \
+  --output artifacts/feedback_agent/review_pack.jsonl \
+  --top-k 20 \
+  --repeats 5
+
+python -m vidsearch.feedback.agent_operator write-prompt \
+  --pack artifacts/feedback_agent/review_pack.jsonl \
+  --output artifacts/feedback_agent/agent_prompt.md
+```
+
+Give `artifacts/feedback_agent/agent_prompt.md` and `artifacts/feedback_agent/review_pack.jsonl` to the agent reviewer. The agent writes one JSONL decision per task to `artifacts/feedback_agent/decisions.jsonl`. Apply those decisions:
+
+```bash
+python -m vidsearch.feedback.agent_operator apply-decisions \
+  --pack artifacts/feedback_agent/review_pack.jsonl \
+  --decisions artifacts/feedback_agent/decisions.jsonl \
+  --client-session-prefix rlhf-agent \
+  --operator codex-agent \
+  --replace-prefix
+```
+
+Then train and evaluate:
+
+```bash
+python -m vidsearch.feedback.train_ranker --output artifacts/feedback_rankers/latest.json --approve-promotion --p0-g4-passing
+python -m vidsearch.feedback.evaluate_ranker --artifact artifacts/feedback_rankers/latest.json --output artifacts/feedback_eval/latest.json --changed-report-prefix artifacts/feedback_eval/latest_changed
+```
+
+The `--replace-prefix` flag makes reruns reproducible by deleting prior feedback sessions with that client-session prefix before recreating them. Omit it if you want the script to fail rather than overwrite an existing bootstrap set.
+
+Emergency rollback for learned feedback ranking:
+
+```bash
+VIDSEARCH_FEEDBACK_RANKER_ENABLED=false
+VIDSEARCH_FEEDBACK_RANKER_SHADOW=false
+docker compose up -d --no-deps --force-recreate api
+```
+
+The rollback returns serving to Phase 0 ordering. Feedback logging can remain enabled because it does not mutate Qdrant vectors, OCR, captions, thumbnails, or corpus records.
 
 ## 10. Run the eval
 

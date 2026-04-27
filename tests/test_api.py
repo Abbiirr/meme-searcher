@@ -108,6 +108,24 @@ def test_search_uses_public_thumbnail_url(monkeypatch):
         ],
     }
     monkeypatch.setitem(sys.modules, "vidsearch.query.retrieve_images", fake_module)
+    monkeypatch.setattr(
+        api_main.feedback_service,
+        "log_search_impressions",
+        lambda **kwargs: {
+            "search_id": "11111111-1111-1111-1111-111111111111",
+            "ranker_version_id": "baseline",
+            "none_correct_url": "http://127.0.0.1:8000/feedback/confirm/none",
+            "impressions": [
+                {
+                    "image_id": "img_123",
+                    "impression_id": "22222222-2222-2222-2222-222222222222",
+                    "select_url": "http://127.0.0.1:8000/feedback/confirm/select",
+                    "reject_url": "http://127.0.0.1:8000/feedback/confirm/reject",
+                    "undo_url": "http://127.0.0.1:8000/feedback/confirm/undo",
+                }
+            ],
+        },
+    )
 
     with TestClient(app) as client:
         resp = client.post("/search", json={"query": "example meme", "limit": 5})
@@ -115,6 +133,10 @@ def test_search_uses_public_thumbnail_url(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["hits"][0]["thumbnail_uri"].endswith("/thumbnail/img_123.webp")
+    assert body["search_id"] == "11111111-1111-1111-1111-111111111111"
+    assert body["feedback_enabled"] is True
+    assert body["hits"][0]["impression_id"] == "22222222-2222-2222-2222-222222222222"
+    assert body["hits"][0]["feedback_select_url"].endswith("/feedback/confirm/select")
 
 
 def test_thumbnail_endpoint_downloads_bytes(monkeypatch):
@@ -170,3 +192,61 @@ def test_delete_image_removes_thumbnail_qdrant_and_pg(monkeypatch):
         ("qdrant", "img_1"),
         ("pg", "img_1"),
     ]
+
+
+def test_feedback_confirm_get_does_not_write_and_sets_csrf(monkeypatch):
+    _stub_startup_seed(monkeypatch)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "vidsearch.feedback.tokens.verify_feedback_token",
+        lambda token: {"action": "select", "search_id": "search"},
+    )
+    monkeypatch.setattr(api_main.feedback_service, "record_judgment_from_token", lambda token: calls.append(token))
+
+    with TestClient(app) as client:
+        resp = client.get("/feedback/confirm/test-token")
+
+    assert resp.status_code == 200
+    assert "vidsearch_feedback_csrf" in resp.cookies
+    assert "method=\"post\" action=\"/feedback/judgment\"" in resp.text
+    assert calls == []
+
+
+def test_feedback_judgment_post_requires_csrf(monkeypatch):
+    _stub_startup_seed(monkeypatch)
+    monkeypatch.setattr(api_main.feedback_service, "record_judgment_from_token", lambda token: {"status": "recorded"})
+
+    with TestClient(app) as client:
+        resp = client.post("/feedback/judgment", json={"token": "test-token", "csrf_token": "missing-cookie"})
+
+    assert resp.status_code == 403
+
+
+def test_feedback_judgment_post_records_once_with_csrf(monkeypatch):
+    _stub_startup_seed(monkeypatch)
+    calls: list[str] = []
+
+    def fake_record(token):
+        calls.append(token)
+        return {
+            "status": "recorded",
+            "judgment_id": "33333333-3333-3333-3333-333333333333",
+            "search_id": "11111111-1111-1111-1111-111111111111",
+            "impression_id": "22222222-2222-2222-2222-222222222222",
+            "pairs_created": 4,
+        }
+
+    monkeypatch.setattr(api_main.feedback_service, "record_judgment_from_token", fake_record)
+
+    with TestClient(app) as client:
+        client.cookies.set("vidsearch_feedback_csrf", "csrf")
+        resp = client.post(
+            "/feedback/judgment",
+            json={"token": "test-token", "csrf_token": "csrf"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "recorded"
+    assert resp.json()["pairs_created"] == 4
+    assert calls == ["test-token"]

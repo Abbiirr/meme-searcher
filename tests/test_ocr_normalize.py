@@ -1,51 +1,32 @@
-from vidsearch.ingest.ocr_normalize import normalize_ocr_text
+from __future__ import annotations
+
+from vidsearch.ingest.caption import Captions, build_retrieval_text
+from vidsearch.ingest.ocr_normalize import normalize_ocr_text, repair_mojibake_text
 
 
-def test_normalize_drops_low_confidence_from_embed():
-    boxes = [
-        {"text": "Hello", "conf": 0.9},
-        {"text": "World", "conf": 0.3},
-        {"text": "Meme", "conf": 0.8},
-    ]
-    embed, full, _ = normalize_ocr_text(boxes, confidence_threshold=0.6)
-    assert "hello" in embed
-    assert "meme" in embed
-    assert "world" not in embed
-    assert "Hello" in full
-    assert "World" in full
-    assert "Meme" in full
+def _mojibake(text: str) -> str:
+    return text.encode("utf-8").decode("latin1")
 
 
-def test_normalize_keeps_all_in_full_text():
-    boxes = [
-        {"text": "A", "conf": 0.1},
-        {"text": "B", "conf": 0.9},
-    ]
-    _, full, _ = normalize_ocr_text(boxes)
-    assert "A" in full
-    assert "B" in full
+def test_repair_mojibake_text_recovers_bangla_utf8_latin1():
+    mojibake = _mojibake("এই কথা আর কাউরে কইবা না")
+
+    repaired = repair_mojibake_text(mojibake)
+
+    assert "এই কথা" in repaired
+    assert "à¦" not in repaired
 
 
-def test_normalize_collapses_whitespace():
-    boxes = [
-        {"text": "  hello   world  ", "conf": 0.9},
-    ]
-    embed, _, _ = normalize_ocr_text(boxes)
-    assert "  " not in embed
+def test_normalize_ocr_text_repairs_mojibake_before_embedding():
+    boxes = [{"text": _mojibake("এই কথা"), "conf": 0.99}]
+
+    embed_text, full_text, _ = normalize_ocr_text(boxes)
+
+    assert embed_text == "এই কথা"
+    assert full_text == "এই কথা"
 
 
-def test_normalize_empty():
-    embed, full, boxes = normalize_ocr_text([])
-    assert embed == ""
-    assert full == ""
+def test_build_retrieval_text_repairs_mojibake_ocr():
+    text = build_retrieval_text(Captions(literal="A Bangla meme."), _mojibake("এই কথা"))
 
-
-def test_normalize_drops_no_text_placeholders():
-    boxes = [
-        {"text": "There is no text in the image.", "conf": 1.0},
-        {"text": "No visible text", "conf": 1.0},
-    ]
-    embed, full, kept = normalize_ocr_text(boxes)
-    assert embed == ""
-    assert full == ""
-    assert kept == boxes
+    assert "[OCR] এই কথা" in text

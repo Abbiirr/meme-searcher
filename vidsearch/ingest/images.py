@@ -27,6 +27,11 @@ INGEST_STEPS = [
 ]
 
 
+def _error_meta(error: str, **extra) -> dict:
+    """Normalize ingest-step failures for ops queries and closeout audits."""
+    return {"error": error, "error_reason": error, **extra}
+
+
 def _captions_from_existing(existing: dict | None) -> Captions:
     if not existing:
         return Captions()
@@ -136,7 +141,7 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
     except Exception as e:
         logger.error("decode failed for %s: %s", path, e)
         with pg_store.get_cursor() as cur:
-            pg_store.upsert_ingest_step(cur, img_id, "decode", "error", {"error": str(e)})
+            pg_store.upsert_ingest_step(cur, img_id, "decode", "error", _error_meta(str(e)))
         result["status"] = "failed"
         result["error"] = f"decode: {e}"
         log_event(
@@ -162,7 +167,7 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
         thumb_uri = None
         thumb_error = str(e)
         with pg_store.get_cursor() as cur:
-            pg_store.upsert_ingest_step(cur, img_id, "thumbnail", "error", {"error": str(e)})
+            pg_store.upsert_ingest_step(cur, img_id, "thumbnail", "error", _error_meta(str(e)))
 
     effective_thumb_uri = thumb_uri or existing_thumbnail_uri
     with pg_store.get_cursor() as cur:
@@ -170,9 +175,9 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
         if effective_thumb_uri and not thumb_uri and existing_thumbnail_uri:
             meta = {"preserved": True}
             if thumb_error:
-                meta["error"] = thumb_error
+                meta.update(_error_meta(thumb_error))
         elif thumb_error:
-            meta = {"error": thumb_error}
+            meta = _error_meta(thumb_error)
         pg_store.upsert_ingest_step(cur, img_id, "thumbnail", "done" if effective_thumb_uri else "skipped", meta)
 
     ocr_boxes = []
@@ -205,9 +210,9 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
         if ocr_preserved:
             meta = {"preserved": True}
             if ocr_error:
-                meta["error"] = ocr_error
+                meta.update(_error_meta(ocr_error))
         elif ocr_error:
-            meta = {"error": ocr_error}
+            meta = _error_meta(ocr_error)
         pg_store.upsert_ingest_step(cur, img_id, "ocr", "done" if effective_has_ocr else "skipped", meta)
 
     # ── caption step (gateway VLM; emits the 4 labels of retrieval_plan §2.3) ──
@@ -234,9 +239,9 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
         if caption_preserved:
             meta = {"preserved": True}
             if caption_error:
-                meta["error"] = caption_error
+                meta.update(_error_meta(caption_error))
         elif caption_error:
-            meta = {"error": caption_error}
+            meta = _error_meta(caption_error)
         pg_store.upsert_ingest_step(
             cur, img_id, "caption",
             "done" if effective_has_caption else ("skipped" if not ENABLE_CAPTIONS else "error"),
@@ -268,9 +273,9 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
         if not text_dense and (effective_text_dense or effective_text_sparse):
             meta = {"preserved": True}
             if text_error:
-                meta["error"] = text_error
+                meta.update(_error_meta(text_error))
         elif text_error:
-            meta = {"error": text_error}
+            meta = _error_meta(text_error)
         pg_store.upsert_ingest_step(
             cur,
             img_id,
@@ -297,9 +302,9 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
         if not visual and effective_visual:
             meta = {"preserved": True}
             if visual_error:
-                meta["error"] = visual_error
+                meta.update(_error_meta(visual_error))
         elif visual_error:
-            meta = {"error": visual_error}
+            meta = _error_meta(visual_error)
         pg_store.upsert_ingest_step(cur, img_id, "embed_visual", "done" if effective_visual else "skipped", meta)
 
     with pg_store.get_cursor() as cur:
@@ -376,7 +381,7 @@ def ingest_image(path: str | Path, force: bool = False) -> dict:
     with pg_store.get_cursor() as cur:
         meta = None
         if qdrant_error:
-            meta = {"error": qdrant_error}
+            meta = _error_meta(qdrant_error)
         elif existing_point and (
             ((not text_dense) and bool(effective_text_dense))
             or ((not text_sparse) and bool(effective_text_sparse))
