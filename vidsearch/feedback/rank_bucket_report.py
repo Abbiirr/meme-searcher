@@ -37,7 +37,7 @@ def _target_language(target: dict[str, Any] | None, prompt: str) -> str:
 def rank_bucket(row: dict[str, Any]) -> str:
     if row.get("status") == "target_not_indexed":
         return "target_not_indexed"
-    if row.get("status") != "found_selected":
+    if row.get("status") not in {"found_selected", "target_found"}:
         top_k = int(row.get("top_k") or 0)
         return f"target_not_in_top_{top_k}" if top_k else "target_not_retrieved"
 
@@ -50,10 +50,8 @@ def rank_bucket(row: dict[str, Any]) -> str:
         return "target_in_top_10_not_1"
     if rank <= 20:
         return "target_in_top_20_not_10"
-    if rank <= 50:
-        return "target_in_top_50_not_20"
     if rank <= 100:
-        return "target_in_top_100_not_50"
+        return "target_in_top_100_not_20"
     return "target_found_after_100"
 
 
@@ -61,13 +59,77 @@ def _nested_increment(counter: dict[str, Counter[str]], key: str, bucket: str) -
     counter[key][bucket] += 1
 
 
-def build_rank_bucket_report(*, results_path: Path, pack_path: Path, output_path: Path) -> dict[str, Any]:
+def _read_consensus(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    return {str(row.get("prompt_id")): row for row in _read_jsonl(path) if row.get("prompt_id")}
+
+
+def _eligibility(counts: Counter[str], by_prompt_category: dict[str, Counter[str]]) -> dict[str, Any]:
+    eligible_2_10 = counts["target_in_top_10_not_1"]
+    eligible_11_20 = counts["target_in_top_20_not_10"]
+    exact_eligible = (
+        by_prompt_category["exact_text"]["target_in_top_10_not_1"]
+        + by_prompt_category["exact_text"]["target_in_top_20_not_10"]
+    )
+    fuzzy_eligible = (
+        by_prompt_category["fuzzy_text"]["target_in_top_10_not_1"]
+        + by_prompt_category["fuzzy_text"]["target_in_top_20_not_10"]
+    )
+    failures = []
+    if eligible_2_10 < 50:
+        failures.append(f"target_in_top_10_not_1 {eligible_2_10} < 50")
+    if eligible_11_20 < 100:
+        failures.append(f"target_in_top_20_not_10 {eligible_11_20} < 100")
+    if exact_eligible < 50:
+        failures.append(f"exact_text eligible judgments {exact_eligible} < 50")
+    if fuzzy_eligible < 50:
+        failures.append(f"fuzzy_text eligible judgments {fuzzy_eligible} < 50")
+    return {
+        "eligible_for_ranker_training": not failures,
+        "eligible_rank_2_to_10": eligible_2_10,
+        "eligible_rank_11_to_20": eligible_11_20,
+        "exact_text_eligible": exact_eligible,
+        "fuzzy_text_eligible": fuzzy_eligible,
+        "stop_reasons": failures,
+    }
+
+
+def _write_markdown_summary(path: Path, report: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# R2 Rank Bucket Summary",
+        "",
+        f"Total rows: `{report['total_rows']}`",
+        f"Found rows: `{report['found_count']}`",
+        f"Missing rows: `{report['missing_count']}`",
+        "",
+        "| Bucket | Count |",
+        "| --- | ---: |",
+    ]
+    for bucket, count in sorted((report.get("bucket_counts") or {}).items()):
+        lines.append(f"| `{bucket}` | `{count}` |")
+    lines.extend(["", "Eligibility:", ""])
+    for key, value in sorted((report.get("eligibility") or {}).items()):
+        lines.append(f"- `{key}`: `{value}`")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_rank_bucket_report(
+    *,
+    results_path: Path,
+    pack_path: Path,
+    output_path: Path,
+    judgments_path: Path | None = None,
+    summary_path: Path | None = None,
+) -> dict[str, Any]:
     rows = [row for row in _read_jsonl(results_path) if row.get("record_type") == RESULT_RECORD]
     targets = {
         str(row.get("target_id")): row
         for row in _read_jsonl(pack_path)
         if row.get("record_type") == TARGET_RECORD and row.get("target_id")
     }
+    consensus = _read_consensus(judgments_path)
 
     by_bucket: Counter[str] = Counter()
     by_prompt_category: dict[str, Counter[str]] = defaultdict(Counter)
@@ -78,7 +140,9 @@ def build_rank_bucket_report(*, results_path: Path, pack_path: Path, output_path
     items: list[dict[str, Any]] = []
 
     for row in rows:
-        bucket = rank_bucket(row)
+        prompt_id = str(row.get("prompt_id") or "")
+        label = consensus.get(prompt_id)
+        bucket = "uncertain" if label and label.get("label") == "uncertain" else rank_bucket(row)
         target_id = str(row.get("target_id") or "")
         category = str(row.get("prompt_category") or "unspecified")
         language = _target_language(targets.get(target_id), str(row.get("prompt") or ""))
@@ -104,6 +168,7 @@ def build_rank_bucket_report(*, results_path: Path, pack_path: Path, output_path
                 "rank": row.get("rank"),
                 "top_k": row.get("top_k"),
                 "bucket": bucket,
+                "consensus_label": label.get("label") if label else None,
             }
         )
 
@@ -125,10 +190,13 @@ def build_rank_bucket_report(*, results_path: Path, pack_path: Path, output_path
         "bucket_counts_by_prompt_category": {key: dict(sorted(value.items())) for key, value in sorted(by_prompt_category.items())},
         "bucket_counts_by_language": {key: dict(sorted(value.items())) for key, value in sorted(by_language.items())},
         "bucket_counts_by_target_id": {key: dict(sorted(value.items())) for key, value in sorted(by_target.items())},
+        "eligibility": _eligibility(by_bucket, by_prompt_category),
         "items": items,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if summary_path:
+        _write_markdown_summary(summary_path, report)
     return report
 
 
@@ -136,13 +204,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize target replay ranks into RLHF rank buckets.")
     parser.add_argument("--results", default="artifacts/feedback_targets/full_metadata_results.jsonl")
     parser.add_argument("--pack", default="artifacts/feedback_targets/target_pack.jsonl")
+    parser.add_argument("--judgments", default="")
     parser.add_argument("--output", default="artifacts/feedback_targets/full_metadata_rank_buckets.json")
+    parser.add_argument("--summary", default="")
     args = parser.parse_args()
 
     report = build_rank_bucket_report(
         results_path=Path(args.results),
         pack_path=Path(args.pack),
         output_path=Path(args.output),
+        judgments_path=Path(args.judgments) if args.judgments else None,
+        summary_path=Path(args.summary) if args.summary else None,
     )
     print(json.dumps({k: v for k, v in report.items() if k != "items"}, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

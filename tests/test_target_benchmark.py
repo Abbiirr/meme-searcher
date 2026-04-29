@@ -112,6 +112,7 @@ def test_model_fingerprint_records_family_and_mode():
     assert fingerprint["provider"] == "litellm"
     assert fingerprint["mode"] == "image"
     assert _model_family("fast") == "gateway-default"
+    assert _model_family("fast-vl") == "gateway-default"
 
 
 def test_parse_batch_prompt_response_maps_prompts_by_target():

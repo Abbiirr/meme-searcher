@@ -70,7 +70,7 @@ def _model_family(model: str) -> str:
         return "llama"
     if "mistral" in lowered:
         return "mistral"
-    if "fast" == lowered:
+    if lowered == "fast" or lowered.startswith("fast-"):
         return "gateway-default"
     return "unknown"
 
@@ -954,6 +954,7 @@ def run_target_searches(
     replace_prefix: bool = False,
     timeout_seconds: float = 60.0,
     validate_only: bool = False,
+    auto_select_found: bool = True,
 ) -> dict[str, Any]:
     pack_rows = _read_jsonl(pack_path)
     prompt_rows = _read_jsonl(prompts_path)
@@ -1029,18 +1030,33 @@ def run_target_searches(
             found_hit = next((hit for hit in hits if hit.get("image_id") == target_image_id), None)
             top_image_ids = [str(hit.get("image_id")) for hit in hits]
             if found_hit:
-                token = _token_from_feedback_url(str(found_hit.get("feedback_select_url") or ""))
-                judgment = record_judgment_from_token(token)
+                judgment = None
+                if auto_select_found:
+                    token = _token_from_feedback_url(str(found_hit.get("feedback_select_url") or ""))
+                    judgment = record_judgment_from_token(token)
                 selected += 1
                 results.append(
                     {
                         **base_result,
-                        "status": "found_selected",
+                        "status": "found_selected" if auto_select_found else "target_found",
                         "search_id": search_response.get("search_id"),
                         "rank": int(found_hit.get("rank") or 0),
                         "base_rank": found_hit.get("base_rank"),
                         "judgment": judgment,
                         "top_image_ids": top_image_ids,
+                        "slate": [
+                            {
+                                "image_id": hit.get("image_id"),
+                                "rank": hit.get("rank"),
+                                "source_uri": hit.get("source_uri"),
+                                "ocr_excerpt": hit.get("ocr_excerpt"),
+                                "caption_literal": hit.get("caption_literal"),
+                                "caption_figurative": hit.get("caption_figurative"),
+                                "template_name": hit.get("template_name"),
+                                "tags": hit.get("tags") or [],
+                            }
+                            for hit in hits
+                        ],
                     }
                 )
                 _write_jsonl(output_path, results)
@@ -1054,6 +1070,19 @@ def run_target_searches(
                     "search_id": search_response.get("search_id"),
                     "top_image_ids": top_image_ids,
                     "top_source_uris": [str(hit.get("source_uri") or "") for hit in hits],
+                    "slate": [
+                        {
+                            "image_id": hit.get("image_id"),
+                            "rank": hit.get("rank"),
+                            "source_uri": hit.get("source_uri"),
+                            "ocr_excerpt": hit.get("ocr_excerpt"),
+                            "caption_literal": hit.get("caption_literal"),
+                            "caption_figurative": hit.get("caption_figurative"),
+                            "template_name": hit.get("template_name"),
+                            "tags": hit.get("tags") or [],
+                        }
+                        for hit in hits
+                    ],
                 }
                 results.append(row)
                 misses.append({**row, "record_type": MISSING_RECORD})
@@ -1163,6 +1192,7 @@ def main() -> int:
     run.add_argument("--replace-prefix", action="store_true")
     run.add_argument("--timeout-seconds", type=float, default=60.0)
     run.add_argument("--validate-only", action="store_true")
+    run.add_argument("--no-auto-select", action="store_true", help="Log top-k slates without creating target-selection judgments.")
 
     args = parser.parse_args()
     if args.command == "build-target-pack":
@@ -1233,6 +1263,7 @@ def main() -> int:
             replace_prefix=args.replace_prefix,
             timeout_seconds=args.timeout_seconds,
             validate_only=args.validate_only,
+            auto_select_found=not args.no_auto_select,
         )
 
     print(json.dumps(result, indent=2, sort_keys=True, default=_json_default))

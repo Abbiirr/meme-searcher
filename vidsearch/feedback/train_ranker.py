@@ -11,7 +11,7 @@ from psycopg.types.json import Json
 
 from vidsearch.feedback.ranker import FEATURE_KEYS, feature_vector
 from vidsearch.feedback.schema import ensure_feedback_schema
-from vidsearch.feedback.service import FEATURE_VERSION
+from vidsearch.feedback.service import FEATURE_VERSION, target_id_from_client_session_id
 from vidsearch.storage import pg as pg_store
 
 
@@ -28,13 +28,17 @@ def _sigmoid(value: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-np.clip(value, -40, 40)))
 
 
-def _bucket(search_id: str) -> int:
-    digest = hashlib.sha256(search_id.encode("utf-8")).hexdigest()
+def _bucket(split_key: str) -> int:
+    digest = hashlib.sha256(split_key.encode("utf-8")).hexdigest()
     return int(digest[:8], 16) % 100
 
 
-def _split_name(search_id: str) -> str:
-    bucket = _bucket(search_id)
+def _split_key(search_id: str, client_session_id: str | None = None, target_id: str | None = None) -> str:
+    return target_id or target_id_from_client_session_id(client_session_id) or search_id
+
+
+def _split_name(search_id: str, client_session_id: str | None = None, target_id: str | None = None) -> str:
+    bucket = _bucket(_split_key(search_id, client_session_id, target_id))
     if bucket < 70:
         return "train"
     if bucket < 85:
@@ -55,6 +59,8 @@ def _load_pairs(client_session_prefix: str | None = None) -> list[dict[str, Any]
         cur.execute(
             """SELECT p.search_id::text,
                       s.intent,
+                      s.client_session_id,
+                      s.target_id,
                       p.feature_version,
                       winner.features_jsonb,
                       loser.features_jsonb,
@@ -74,13 +80,16 @@ def _load_pairs(client_session_prefix: str | None = None) -> list[dict[str, Any]
             {
                 "search_id": row[0],
                 "intent": row[1],
-                "feature_version": int(row[2]),
-                "winner_features": row[3],
-                "loser_features": row[4],
-                "winner_impression_id": row[5],
-                "loser_impression_id": row[6],
-                "pair_weight": float(row[7]),
-                "split": _split_name(row[0]),
+                "client_session_id": row[2],
+                "target_id": row[3],
+                "feature_version": int(row[4]),
+                "winner_features": row[5],
+                "loser_features": row[6],
+                "winner_impression_id": row[7],
+                "loser_impression_id": row[8],
+                "pair_weight": float(row[9]),
+                "split_key": _split_key(row[0], row[2], row[3]),
+                "split": _split_name(row[0], row[2], row[3]),
             }
             for row in cur.fetchall()
         ]

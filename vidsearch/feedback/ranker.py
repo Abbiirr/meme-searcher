@@ -125,7 +125,10 @@ def _cap_upward_movement(original: list[dict[str, Any]], desired: list[dict[str,
                     final[index] = desired_hit
                     break
 
-    return [hit for hit in final if hit is not None]
+    reranked = [hit for hit in final if hit is not None]
+    for index, hit in enumerate(reranked, start=1):
+        hit["rank"] = index
+    return reranked
 
 
 def maybe_apply_feedback_ranker(query: str, intent: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:

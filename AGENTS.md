@@ -30,6 +30,14 @@ Commit policy:
 - Codex, Claude, and OpenCode must not run `git commit`, `git push`, `git merge`, `git rebase`, or `git commit --amend` unless the user explicitly asks
 - Agents may stage, inspect, and prepare changes, but the final commit action stays with the user
 
+Research documentation policy:
+- Treat this repository as a research codebase whose experiments may later become paper material
+- Document every meaningful implementation change, experiment run, failure, metric, gate decision, and operational blocker in a durable form
+- Prefer committed markdown under `docs/`, `docs/experiments/`, or a concise `AGENTS_CONVERSATION.MD` entry for cross-agent status
+- Raw artifacts under `artifacts/` should stay uncommitted; summarize their important results in markdown tables or reports
+- Do not leave important experimental evidence only in terminal output, chat text, or local scratch files
+- Negative results and failed attempts are first-class research evidence and should be documented with enough context to reproduce or cite later
+ 
 <!-- agent-comms:start -->
 ## Agent Communication
 

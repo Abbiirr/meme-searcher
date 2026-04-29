@@ -10,7 +10,7 @@ import numpy as np
 from vidsearch.config import FEEDBACK_MAX_UPWARD_MOVEMENT, FEEDBACK_RANKER_ALPHA
 from vidsearch.eval.metrics import compute_all_metrics
 from vidsearch.eval.runner import _qrels_from_db, _qrels_from_yaml, load_queries
-from vidsearch.feedback.ranker import FEATURE_KEYS, feature_vector
+from vidsearch.feedback.ranker import FEATURE_KEYS, _cap_upward_movement, feature_vector
 from vidsearch.feedback.service import FEATURE_VERSION, feature_snapshot
 from vidsearch.query.retrieve_images import retrieve_images
 from vidsearch.storage.pg import get_cursor
@@ -72,31 +72,6 @@ def _offline_learned_order(
         reverse=True,
     )
     return _cap_upward_movement(scored, desired)
-
-
-def _cap_upward_movement(original: list[dict[str, Any]], desired: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    original_positions = {hit["image_id"]: index for index, hit in enumerate(original)}
-    final: list[dict[str, Any] | None] = [None] * len(original)
-
-    for desired_hit in desired:
-        original_index = original_positions[desired_hit["image_id"]]
-        earliest = max(0, original_index - FEEDBACK_MAX_UPWARD_MOVEMENT)
-        placed = False
-        for index in range(earliest, len(final)):
-            if final[index] is None:
-                final[index] = desired_hit
-                placed = True
-                break
-        if not placed:
-            for index in range(len(final)):
-                if final[index] is None:
-                    final[index] = desired_hit
-                    break
-
-    reranked = [hit for hit in final if hit is not None]
-    for index, hit in enumerate(reranked, start=1):
-        hit["rank"] = index
-    return reranked
 
 
 def _load_grade_map(query: dict[str, Any], *, use_db_qrels: bool) -> dict[str, int]:
@@ -161,7 +136,7 @@ def _overlap_gates(block: dict[str, Any]) -> dict[str, bool]:
         "without_overlap_recall_at_10_floor": learned.get("Recall@10", 0.0) >= 0.90,
         "without_overlap_top_1_hit_rate_floor": learned.get("top_1_hit_rate", 0.0) >= 0.70,
         "without_overlap_no_recall_at_10_regression": deltas.get("Recall@10", 0.0) >= -0.02,
-        "without_overlap_no_top_1_hit_rate_regression": deltas.get("top_1_hit_rate", 0.0) >= -0.02,
+        "without_overlap_no_top_1_hit_rate_regression": deltas.get("top_1_hit_rate", 0.0) >= 0.0,
         "without_overlap_no_exact_text_misses_outside_top10": not block["exact_text_misses_outside_top10"],
     }
 

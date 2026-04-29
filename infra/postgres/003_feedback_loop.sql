@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS feedback.search_sessions (
     feature_version INT NOT NULL DEFAULT 1,
     propensity_method TEXT NOT NULL DEFAULT 'deterministic_no_ope',
     exploration_policy TEXT NOT NULL DEFAULT 'none',
+    target_id TEXT,
     consent_scope TEXT NOT NULL DEFAULT 'feedback_only',
     opt_out BOOLEAN NOT NULL DEFAULT false,
     deleted_at TIMESTAMPTZ,
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS feedback.search_sessions (
 
 ALTER TABLE IF EXISTS feedback.search_sessions
     ADD COLUMN IF NOT EXISTS exploration_policy TEXT NOT NULL DEFAULT 'none',
+    ADD COLUMN IF NOT EXISTS target_id TEXT,
     ADD COLUMN IF NOT EXISTS consent_scope TEXT NOT NULL DEFAULT 'feedback_only',
     ADD COLUMN IF NOT EXISTS opt_out BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
@@ -164,6 +166,9 @@ CREATE TABLE IF NOT EXISTS feedback.rate_limit_events (
 
 CREATE INDEX IF NOT EXISTS search_sessions_client_served_idx
     ON feedback.search_sessions (client_session_id, served_at DESC);
+CREATE INDEX IF NOT EXISTS search_sessions_target_idx
+    ON feedback.search_sessions (target_id)
+    WHERE target_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS search_impressions_search_idx
     ON feedback.search_impressions (search_id);
 CREATE INDEX IF NOT EXISTS search_impressions_image_idx

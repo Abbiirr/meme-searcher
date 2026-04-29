@@ -29,6 +29,7 @@ from vidsearch.feedback.train_ranker import (
     _diff_matrix,
     _pair_weight,
     _per_intent_capability,
+    _split_key,
     _training_composition,
 )
 
@@ -171,6 +172,12 @@ def test_client_session_clause_filters_by_prefix():
 
     assert "client_session_id LIKE" in clause
     assert params == ("rlhf-target-full%",)
+
+
+def test_ranker_split_key_prefers_target_identity_from_session_id():
+    key = _split_key("search-1", "rlaif-r2-search-target-deadbeef:p03-abcdef", None)
+
+    assert key == "target-deadbeef"
 
 
 def test_per_intent_capability_marks_partial_coverage_as_diagnostic_only():

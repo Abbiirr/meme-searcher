@@ -66,6 +66,18 @@ def _safe_session_id(client_session_id: str | None, raw_user_ref: str | None = N
     return "anonymous"
 
 
+def target_id_from_client_session_id(client_session_id: str | None) -> str | None:
+    """Best-effort RLAIF target extraction from benchmark session IDs.
+
+    Target benchmark sessions are created from prompt IDs like
+    `target-abc123:p03` or `holdout-abc123:p03`. Persisting this value keeps
+    all prompts for one target in the same training split.
+    """
+    value = (client_session_id or "").strip()
+    match = re.search(r"((?:target|holdout)-[^:]+):p\d+", value)
+    return match.group(1) if match else None
+
+
 def _redact_query(query: str) -> str:
     collapsed = re.sub(r"\s+", " ", query).strip()
     return collapsed[:500]
@@ -153,8 +165,8 @@ def log_search_impressions(
         cur.execute(
             """INSERT INTO feedback.search_sessions
                (query_text, query_redacted, intent, client_session_id, user_hash, result_count,
-                ranker_version_id, ranker_mode, feature_version, propensity_method, exploration_policy)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ranker_version_id, ranker_mode, feature_version, propensity_method, exploration_policy, target_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING search_id""",
             (
                 query,
@@ -168,6 +180,7 @@ def log_search_impressions(
                 FEATURE_VERSION,
                 PROPENSITY_METHOD,
                 exploration_policy,
+                target_id_from_client_session_id(session_id),
             ),
         )
         search_id = str(cur.fetchone()[0])
